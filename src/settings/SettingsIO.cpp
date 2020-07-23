@@ -232,7 +232,7 @@ static std::array<migration_struct, 7> migrations({
     migration_struct{ "votelogger.partysay-casts", "votelogger.chat.casts" },
     migration_struct{ "votelogger.partysay-casts.f1-only", "votelogger.chat.casts.f1-only" },
     migration_struct{ "misc.pathing", "nav.enabled" },
-    migration_struct{ "misc.pathing.draw", "nav.draw-crumbs" },
+    migration_struct{ "misc.pathing.draw", "nav.draw" },
     migration_struct{ "misc.pathing.log", "nav.log"}
 });
 /* clang-format on */
