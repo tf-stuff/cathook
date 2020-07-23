@@ -37,7 +37,7 @@ static settings::Boolean ignore_textmode{ "follow-bot.ignore-textmode", "true" }
 static settings::Boolean mimic_crouch{ "follow-bot.mimic-crouch", "true" };
 static settings::Boolean autozoom_if_idle{ "follow-bot.autozoom-if-idle", "true" };
 
-namespace nb = hacks::tf2::NavBot;
+//namespace nb = hacks::tf2::NavBot;
 
 static Timer navBotInterval{};
 static unsigned steamid = 0x0;
@@ -268,14 +268,14 @@ static bool startFollow(CachedEntity *entity, bool useNavbot)
             }
         }
     }
-    if (useNavbot)
+    /*if (useNavbot)
     {
         if (nav::navTo(entity->m_vecOrigin(), 8, true, false))
         {
             navtarget = true;
             return true;
         }
-    }
+    }*/
     return false;
 }
 
@@ -310,18 +310,18 @@ static void cm()
     if (!enable || CE_BAD(LOCAL_E) || !LOCAL_E->m_bAlivePlayer() || CE_BAD(LOCAL_W))
     {
         follow_target = 0;
-        if (nb::task::current_task == nb::task::followbot)
-            nb::task::current_task = nb::task::none;
+        /*if (nb::task::current_task == nb::task::followbot)
+            nb::task::current_task = nb::task::none;*/
         return;
     }
     if (!inited)
         init();
 
-    if (nb::task::current_task == nb::task::health || nb::task::current_task == nb::task::ammo)
+    /*if (nb::task::current_task == nb::task::health || nb::task::current_task == nb::task::ammo)
     {
         follow_target = 0;
         return;
-    }
+    }*/
 
     if (afk)
         checkAFK();
@@ -343,7 +343,7 @@ static void cm()
         crouch_timer.update();
     }
 
-    bool isNavBotCM           = navBotInterval.test_and_set(3000) && nav::prepare();
+    bool isNavBotCM           = false; // navBotInterval.test_and_set(3000) && nav::prepare();
     bool foundPreferredTarget = false;
 
     // Target Selection
@@ -512,11 +512,11 @@ static void cm()
     if (navtarget)
     {
         auto ent = ENTITY(follow_target);
-        if (!nav::prepare())
+        /*if (!nav::prepare())
         {
             follow_target = 0;
             navtarget     = 0;
-        }
+        }*/
 
         if (!CE_GOOD(ent) || !startFollow(ent, false))
         {
@@ -531,15 +531,15 @@ static void cm()
                 }
                 if (pos && navtimer.test_and_set(800))
                 {
-                    if (nav::navTo(*pos, 8, true, false))
-                        navinactivity.update();
+                    /*if (nav::navTo(*pos, 8, true, false))
+                        navinactivity.update();*/
                 }
             }
             if (navinactivity.check(5000))
             {
                 follow_target = 0;
             }
-            nb::task::current_task = nb::task::followbot;
+            // nb::task::current_task = nb::task::followbot;
             return;
         }
     }
@@ -547,13 +547,13 @@ static void cm()
     // last check for entity before we continue
     if (!follow_target)
     {
-        if (nb::task::current_task == nb::task::followbot)
-            nb::task::current_task = nb::task::none;
+        // if (nb::task::current_task == nb::task::followbot)
+        //    nb::task::current_task = nb::task::none;
         return;
     }
 
-    nb::task::current_task = nb::task::followbot;
-    nav::clearInstructions();
+    // nb::task::current_task = nb::task::followbot;
+    // nav::clearInstructions();
 
     CachedEntity *followtar = ENTITY(follow_target);
     // wtf is this needed

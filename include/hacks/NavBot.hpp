@@ -1,4 +1,4 @@
-#pragma once
+/*#pragma once
 
 #include <array>
 #include <stdint.h>
@@ -71,3 +71,4 @@ struct bot_class_config
     float max;
 };
 } // namespace hacks::tf2::NavBot
+*/

@@ -1,4 +1,410 @@
 #include "common.hpp"
+#include "micropather.h"
+#include "CNavFile.h"
+#if ENABLE_VISUALS
+#include "drawing.hpp"
+#endif
+
+#include <memory>
+
+namespace navparser
+{
+
+constexpr float PLAYER_WIDTH      = 49;
+constexpr float HALF_PLAYER_WIDTH = PLAYER_WIDTH / 2.0f;
+
+static settings::Boolean enabled("nav.enabled", "false");
+static settings::Boolean draw("nav.draw-crumbs", "false");
+static settings::Boolean log_pathing{ "nav.log", "false" };
+
+// Vischeck that considers player width
+bool IsPlayerPassable(Vector origin, Vector target, bool enviroment_only, CachedEntity *self = LOCAL_E, unsigned int mask = MASK_PLAYERSOLID)
+{
+    Vector tr = target - origin;
+    Vector angles;
+    VectorAngles(tr, angles);
+
+    Vector forward, right, up;
+    AngleVectors3(VectorToQAngle(angles), &forward, &right, &up);
+
+    if (!enviroment_only)
+    {
+        trace_t trace_visible;
+        Ray_t ray;
+
+        trace::filter_no_player.SetSelf(RAW_ENT(self));
+        ray.Init(origin, target, -right * HALF_PLAYER_WIDTH, right * HALF_PLAYER_WIDTH);
+        PROF_SECTION(IEVV_TraceRay);
+        g_ITrace->TraceRay(ray, mask, &trace::filter_no_player, &trace_visible);
+        return (trace_visible.fraction == 1.0f);
+    }
+    else
+    {
+        trace_t trace_visible;
+        Ray_t ray;
+
+        trace::filter_no_entity.SetSelf(RAW_ENT(self));
+        ray.Init(origin, target, -right * HALF_PLAYER_WIDTH, right * HALF_PLAYER_WIDTH);
+        PROF_SECTION(IEVV_TraceRay);
+        g_ITrace->TraceRay(ray, mask, &trace::filter_no_entity, &trace_visible);
+        return (trace_visible.fraction == 1.0f);
+    }
+}
+
+// Vischeck that considers player width
+bool IsPlayerPassableNavigation(Vector origin, Vector target, unsigned int mask = MASK_PLAYERSOLID)
+{
+    Vector tr = target - origin;
+    Vector angles;
+    VectorAngles(tr, angles);
+
+    Vector forward, right, up;
+    AngleVectors3(VectorToQAngle(angles), &forward, &right, &up);
+
+    trace_t trace_visible;
+    Ray_t ray;
+
+    ray.Init(origin, target, -right * HALF_PLAYER_WIDTH, right * HALF_PLAYER_WIDTH);
+    PROF_SECTION(IEVV_TraceRay);
+    g_ITrace->TraceRay(ray, mask, &trace::filter_navigation, &trace_visible);
+    return (trace_visible.fraction == 1.0f);
+}
+
+Vector GetClosestCornerToArea(CNavArea *CornerOf, const Vector &target)
+{
+    std::array<Vector, 4> corners{
+        CornerOf->m_nwCorner,                                                       // NW
+        CornerOf->m_seCorner,                                                       // SE
+        { CornerOf->m_seCorner.x, CornerOf->m_nwCorner.y, CornerOf->m_nwCorner.z }, // NE
+        { CornerOf->m_nwCorner.x, CornerOf->m_seCorner.y, CornerOf->m_seCorner.z }  // SW
+    };
+
+    Vector *bestVec = &corners[0], *bestVec2 = bestVec;
+    float bestDist = corners[0].DistTo(target), bestDist2 = bestDist;
+
+    for (size_t i = 1; i < corners.size(); i++)
+    {
+        float dist = corners[i].DistTo(target);
+        if (dist < bestDist)
+        {
+            bestVec  = &corners[i];
+            bestDist = dist;
+        }
+        if (corners[i] == *bestVec2)
+            continue;
+
+        if (dist < bestDist2)
+        {
+            bestVec2  = &corners[i];
+            bestDist2 = dist;
+        }
+    }
+    return (*bestVec + *bestVec2) / 2;
+}
+
+float getZBetweenAreas(CNavArea *start, CNavArea *end)
+{
+    float z1 = GetClosestCornerToArea(start, end->m_center).z;
+    float z2 = GetClosestCornerToArea(end, start->m_center).z;
+
+    return z2 - z1;
+}
+
+enum class NavState
+{
+    Unavailable = 0,
+    Active
+};
+
+class Map : public micropather::Graph
+{
+public:
+    CNavFile navfile;
+    NavState state;
+    std::unique_ptr<micropather::MicroPather> pather;
+    std::string mapname;
+    Map(const char *mapname) : navfile(mapname), mapname(mapname)
+    {
+        pather = std::make_unique<micropather::MicroPather>(this, 3000, 6, true);
+        if (!navfile.m_isOK)
+            state = NavState::Unavailable;
+        else
+            state = NavState::Active;
+    }
+    float LeastCostEstimate(void *start, void *end) override
+    {
+        return reinterpret_cast<CNavArea *>(start)->m_center.DistTo(reinterpret_cast<CNavArea *>(end)->m_center);
+    }
+    void AdjacentCost(void *main, std::vector<micropather::StateCost> *adjacent) override
+    {
+        CNavArea &area = *reinterpret_cast<CNavArea *>(main);
+        for (NavConnect &connection : area.m_connections)
+        {
+            float cost = connection.area->m_center.DistTo(area.m_center);
+            if (IsPlayerPassableNavigation(area.m_center, connection.area->m_center))
+                adjacent->push_back(micropather::StateCost{ reinterpret_cast<void *>(connection.area), cost });
+        }
+    }
+
+    // Function for getting closest Area to player, aka "LocalNav"
+    CNavArea *findClosestNavSquare(const Vector &vec)
+    {
+        float ovBestDist = FLT_MAX, bestDist = FLT_MAX;
+        // If multiple candidates for LocalNav have been found, pick the closest
+        CNavArea *ovBestSquare = nullptr, *bestSquare = nullptr;
+        for (auto &i : navfile.m_areas)
+        {
+            float dist = i.m_center.DistTo(vec);
+            if (dist < bestDist)
+            {
+                bestDist   = dist;
+                bestSquare = &i;
+            }
+            // Check if we are within x and y bounds of an area
+            if (ovBestDist >= dist || !i.IsOverlapping(vec) || !IsVectorVisibleNavigation(vec, i.m_center, MASK_PLAYERSOLID))
+            {
+                continue;
+            }
+            ovBestDist   = dist;
+            ovBestSquare = &i;
+        }
+        if (!ovBestSquare)
+            ovBestSquare = bestSquare;
+
+        return ovBestSquare;
+    }
+    std::unique_ptr<std::vector<void *>> findPath(CNavArea *local, CNavArea *dest)
+    {
+        using namespace std::chrono;
+
+        if (state != NavState::Active)
+            return {};
+
+        if (log_pathing)
+        {
+            logging::Info("Start: (%f,%f,%f)", local->m_center.x, local->m_center.y, local->m_center.z);
+            logging::Info("End: (%f,%f,%f)", dest->m_center.x, dest->m_center.y, dest->m_center.z);
+        }
+        float cost;
+
+        auto pathNodes = std::make_unique<std::vector<void *>>();
+
+        time_point begin_pathing = high_resolution_clock::now();
+        //int result               = pather->Solve(reinterpret_cast<void *>(local), reinterpret_cast<void *>(dest), &pathNodes, &cost);
+        CNavArea *area1 = new CNavArea;
+        CNavArea *area2 = new CNavArea;
+        area1->m_center.x = 30.0f;
+        pathNodes->push_back(reinterpret_cast<void *>(area1));
+        pathNodes->push_back(reinterpret_cast<void *>(area2));
+        long long timetaken      = duration_cast<nanoseconds>(high_resolution_clock::now() - begin_pathing).count();
+        if (log_pathing)
+            logging::Info("Pathing: Pather result: %i. Time taken (NS): %lld", 0, timetaken);
+        // If no result found, return empty Vector
+        if (0 == micropather::MicroPather::NO_SOLUTION)
+            return {};
+
+        return pathNodes;
+    }
+
+    // Uncesseray thing that is sadly necessary
+    void PrintStateInfo(void *) override
+    {
+    }
+};
+
+struct Crumb
+{
+    CNavArea *navarea;
+    Vector vec;
+};
+
+// ================
+// Engineer gaming
+// ================
+namespace NavEngine
+{
+std::unique_ptr<Map> map;
+std::vector<Crumb> crumbs;
+
+bool isReady()
+{
+    return enabled && map && map->state == NavState::Active;
+}
+
+// The intent is to make it easier for the player to drop down, if their bounding box prevents them from doing so
+void handleTightDropdowns(std::vector<Crumb> &crumbs)
+{
+    size_t crumbs_count = crumbs.size();
+    if (!crumbs_count)
+        return;
+    for (size_t i = 0; i < crumbs_count - 1; i++)
+    {
+        Vector &crumb_a = crumbs[i].vec;
+        Vector &crumb_b = crumbs[i + 1].vec;
+
+        Vector to_target = (crumb_b - crumb_a);
+        // Is an actual dropdown/drops more than player jump height?
+        if (to_target.z > -41.5f)
+            continue;
+        to_target.z = 0;
+        to_target.NormalizeInPlace();
+        Vector angles;
+        VectorAngles(to_target, angles);
+        auto vecTargetForward = GetForwardVector(crumb_a, angles, HALF_PLAYER_WIDTH);
+        crumb_b += vecTargetForward;
+    }
+}
+
+bool navTo(const Vector &destination, int priority, bool should_repath, bool nav_to_local, bool is_repath)
+{
+    if (!isReady())
+        return false;
+    crumbs.clear();
+
+    CNavArea *start_area = map->findClosestNavSquare(g_pLocalPlayer->v_Origin);
+    CNavArea *dest_area  = map->findClosestNavSquare(destination);
+
+    if (!start_area || !dest_area)
+        return false;
+    auto path = map->findPath(start_area, dest_area);
+    if (path->empty())
+        return false;
+
+    if (!nav_to_local)
+    {
+        path->erase(path->begin());
+        if (path->empty())
+            return false;
+    }
+    for (void *area : *path)
+        crumbs.push_back({ reinterpret_cast<CNavArea*>(area), reinterpret_cast<CNavArea*>(area)->m_center });
+    //handleTightDropdowns(crumbs);
+}
+
+// Code to detect "complicated" dropdowns
+// We consider something a complicated dropdown, if the x/y position of crumbs[1] is "behind" crumbs[0]
+/*bool isComplicatedDropdown()
+{
+    Vector to_target = (crumbs[1] - crumbs[0]);
+    to_target.z      = 0;
+    to_target.NormalizeInPlace();
+    Vector angles;
+    VectorAngles(to_target, angles);
+    auto vecTargetForward = GetForwardVector(crumbs[0], angles, 1.0f);
+    vecTargetForward.z    = 0;
+
+    return DotProduct(to_target, vecTargetForward) <= 0.0f;
+}*/
+
+static void FollowCrumbs()
+{
+    size_t crumbs_amount = crumbs.size();
+
+    if (!crumbs_amount)
+        return;
+
+    // We are close enough to the crumb to have reached it
+    if (crumbs[0].vec.DistTo(g_pLocalPlayer->v_Origin) < 50)
+    {
+        crumbs.erase(crumbs.begin());
+        if (!--crumbs_amount)
+            return;
+    }
+
+    WalkTo(crumbs[0].vec);
+}
+
+void CreateMove()
+{
+    /*
+    if (!isReady())
+        return;
+    if (CE_BAD(LOCAL_E) || !LOCAL_E->m_bAlivePlayer())
+        return;
+
+    FollowCrumbs();*/
+}
+
+void LevelInit()
+{
+    auto level_name = g_IEngine->GetLevelName();
+    if (!map || map->mapname != level_name)
+    {
+        char *p, cwd[PATH_MAX + 1], nav_path[PATH_MAX + 1], lvl_name[256];
+
+        std::strncpy(lvl_name, level_name, 255);
+        lvl_name[255] = 0;
+        p             = std::strrchr(lvl_name, '.');
+        if (!p)
+        {
+            logging::Info("Failed to find dot in level name");
+            return;
+        }
+        *p = 0;
+        p  = getcwd(cwd, sizeof(cwd));
+        if (!p)
+        {
+            logging::Info("Failed to get current working directory: %s", strerror(errno));
+            return;
+        }
+        std::snprintf(nav_path, sizeof(nav_path), "%s/tf/%s.nav", cwd, lvl_name);
+        logging::Info("Pathing: Nav File location: %s", nav_path);
+        map = std::make_unique<Map>(nav_path);
+    }
+}
+
+#if ENABLE_VISUALS
+void Draw()
+{
+    if (!isReady() || !draw)
+        return;
+    if (crumbs.empty())
+        return;
+
+    for (int i = 0; i < crumbs.size(); i++)
+    {
+        Vector start_pos = crumbs[i].vec;
+        Vector end_pos   = start_pos;
+        if (i != crumbs.size() - 1)
+            end_pos = crumbs[i + 1].vec;
+
+        Vector start_screen, end_screen;
+        if (draw::WorldToScreen(start_pos, start_screen))
+        {
+            draw::Rectangle(start_screen.x - 2.0f, start_screen.y - 2.0f, 4.0f, 4.0f, colors::white);
+            if (draw::WorldToScreen(end_pos, end_screen))
+                draw::Line(start_screen.x, start_screen.y, end_screen.x - start_screen.x, end_screen.y - start_screen.y, colors::white, 2.0f);
+        }
+    }
+}
+#endif
+}; // namespace NavEngine
+
+Vector loc;
+
+static CatCommand nav_set("nav_set", "Debug nav find", []() { loc = g_pLocalPlayer->v_Origin; });
+
+static CatCommand nav_path("nav_path", "Debug nav path", []() { NavEngine::navTo(loc, 5, false, true, false); });
+
+static CatCommand nav_path_no_local("nav_path_no_local", "Debug nav path", []() { NavEngine::navTo(loc, 5, false, false, false); });
+
+static InitRoutine init([]() {
+    // this is a comment
+    // so this doesn't get one linered
+    EC::Register(EC::CreateMove, NavEngine::CreateMove, "navengine_cm");
+    EC::Register(EC::LevelInit, NavEngine::LevelInit, "navengine_levelinit");
+#if ENABLE_VISUALS
+    EC::Register(EC::Draw, NavEngine::Draw, "navengine_draw");
+#endif
+    enabled.installChangeCallback([](settings::VariableBase<bool> &, bool after) {
+        if (after && g_IEngine->IsInGame())
+            NavEngine::LevelInit();
+    });
+});
+
+} // namespace navparser
+
+/*#include "common.hpp"
 #include "navparser.hpp"
 #include <thread>
 #include "micropather.h"
@@ -777,10 +1183,10 @@ static void cm()
     /* If can't go through for some time (doors aren't instantly opening)
      * ignore that connection
      * Or if inactive for too long
-     */
+     *
     if (inactivity.check(*stuck_time) || (inactivity.check(*unreachable_time) && !IsVectorVisible(g_pLocalPlayer->v_Origin, *crumb_vec + Vector(.0f, .0f, 41.5f), false, LOCAL_E, MASK_PLAYERSOLID)))
     {
-        /* crumb is invalid if endPoint is used */
+        /* crumb is invalid if endPoint is used *
         if (crumb_vec != &endPoint)
             ignoremanager::addTime(last_area, *crumb, inactivity);
 
@@ -911,3 +1317,4 @@ void clearInstructions()
 }
 static CatCommand nav_stop("nav_cancel", "Cancel Navigation", []() { clearInstructions(); });
 } // namespace nav
+*/

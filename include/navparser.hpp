@@ -1,6 +1,12 @@
 #pragma once
 
-#include <memory>
+
+
+
+
+
+
+/*#include <memory>
 #include "mathlib/vector.h"
 
 class CNavFile;
@@ -40,3 +46,4 @@ void clearInstructions();
 bool isSafe(CNavArea *area);
 
 } // namespace nav
+*/

@@ -1,4 +1,4 @@
-#include "common.hpp"
+/*#include "common.hpp"
 #include "navparser.hpp"
 #include "NavBot.hpp"
 #include "PlayerTools.hpp"
@@ -619,7 +619,7 @@ static bool engineerLogic()
             {
                 if ((dispenser_nav_timer.test_and_set(1000) && getDispenserHealthAndAmmo(metal)) || getHealthAndAmmo(metal))
                     return true;
-            }*/
+            }
             // Else just Roam around the map and kill people
             else if (stayNearEngineer())
                 return true;
@@ -634,7 +634,7 @@ static bool engineerLogic()
     // Metal
     int metal = CE_INT(LOCAL_E, netvar.m_iAmmo + 12);
     /*if ((dispenser_nav_timer.test_and_set(1000) && getDispenserHealthAndAmmo(metal)) || getHealthAndAmmo(metal))
-        return true;*/
+        return true;
     switch (current_engineer_task)
     {
     // Upgrade/repair
@@ -1543,3 +1543,4 @@ void change(settings::VariableBase<bool> &, bool)
 
 static InitRoutine routine([]() { enabled.installChangeCallback(change); });
 } // namespace hacks::tf2::NavBot
+*/

@@ -1446,7 +1446,6 @@ Vector GetForwardVector(Vector origin, Vector viewangles, float distance, Cached
     // Compensate for punch angle
     if (punch_entity && should_correct_punch)
         angle += VectorToQAngle(CE_VECTOR(punch_entity, netvar.vecPunchAngle));
-    trace_t trace;
 
     sy        = sinf(DEG2RAD(angle[1]));
     cy        = cosf(DEG2RAD(angle[1]));
