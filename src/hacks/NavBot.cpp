@@ -6,9 +6,7 @@
 #include "Misc.hpp"
 #include "teamroundtimer.hpp"
 #include "MiscAimbot.hpp"
-#include "flagcontroller.hpp"
-#include "controlpointcontroller.hpp"
-#include "payloadcontroller.hpp"
+#include "CaptureLogic.hpp"
 
 namespace hacks::tf2::NavBot
 {
