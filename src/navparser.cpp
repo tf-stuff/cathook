@@ -19,6 +19,23 @@ static settings::Boolean draw("nav.draw", "false");
 static settings::Boolean draw_debug_areas("nav.draw.debug-areas", "false");
 static settings::Boolean log_pathing{ "nav.log", "false" };
 
+// Cast a Ray and return if it hit
+bool CastRay(Vector origin, Vector endpos, unsigned mask, ITraceFilter *filter)
+{
+    trace_t trace;
+    Ray_t ray;
+
+    ray.Init(origin, endpos);
+
+    // This was found to be So inefficient that it is literally unusable for our purposes. it is almost 1000x slower than the above.
+    // ray.Init(origin, target, -right * HALF_PLAYER_WIDTH, right * HALF_PLAYER_WIDTH);
+
+    PROF_SECTION(IEVV_TraceRay);
+    g_ITrace->TraceRay(ray, mask, filter, &trace);
+
+    return trace.DidHit();
+}
+
 // Vischeck that considers player width
 bool IsPlayerPassable(Vector origin, Vector target, bool enviroment_only, CachedEntity *self = LOCAL_E, unsigned int mask = MASK_PLAYERSOLID)
 {
@@ -30,28 +47,35 @@ bool IsPlayerPassable(Vector origin, Vector target, bool enviroment_only, Cached
     AngleVectors3(VectorToQAngle(angles), &forward, &right, &up);
     right.z = 0;
 
+    // We want to keep the same angle for these two bounding box traces
+    Vector relative_endpos = forward * tr.Length();
+
+    ITraceFilter *filter = nullptr;
     if (!enviroment_only)
     {
-        trace_t trace_visible;
-        Ray_t ray;
-
-        trace::filter_no_player.SetSelf(RAW_ENT(self));
-        ray.Init(origin, target, -right * HALF_PLAYER_WIDTH, right * HALF_PLAYER_WIDTH);
-        PROF_SECTION(IEVV_TraceRay);
-        g_ITrace->TraceRay(ray, mask, &trace::filter_no_player, &trace_visible);
-        return (trace_visible.fraction == 1.0f);
+        if (self)
+            trace::filter_no_player.SetSelf(RAW_ENT(self));
+        filter = &trace::filter_no_player;
     }
     else
     {
-        trace_t trace_visible;
-        Ray_t ray;
-
-        trace::filter_no_entity.SetSelf(RAW_ENT(self));
-        ray.Init(origin, target, -right * HALF_PLAYER_WIDTH, right * HALF_PLAYER_WIDTH);
-        PROF_SECTION(IEVV_TraceRay);
-        g_ITrace->TraceRay(ray, mask, &trace::filter_no_entity, &trace_visible);
-        return (trace_visible.fraction == 1.0f);
+        if (self)
+            trace::filter_no_entity.SetSelf(RAW_ENT(self));
+        filter = &trace::filter_no_entity;
     }
+
+    Vector left_ray_origin = origin - right * HALF_PLAYER_WIDTH;
+    Vector left_ray_endpos = left_ray_origin + relative_endpos;
+
+    // Left ray hit something
+    if (CastRay(left_ray_origin, left_ray_endpos, mask, filter))
+        return false;
+
+    Vector right_ray_origin = origin + right * HALF_PLAYER_WIDTH;
+    Vector right_ray_endpos = right_ray_origin + relative_endpos;
+
+    // Return if the right ray hit something
+    return !CastRay(right_ray_origin, right_ray_endpos, mask, filter);
 }
 
 // Vischeck that considers player width
@@ -65,13 +89,21 @@ bool IsPlayerPassableNavigation(Vector origin, Vector target, unsigned int mask 
     AngleVectors3(VectorToQAngle(angles), &forward, &right, &up);
     right.z = 0;
 
-    trace_t trace_visible;
-    Ray_t ray;
+    // We want to keep the same angle for these two bounding box traces
+    Vector relative_endpos = forward * tr.Length();
 
-    ray.Init(origin, target, -right * HALF_PLAYER_WIDTH, right * HALF_PLAYER_WIDTH);
-    PROF_SECTION(IEVV_TraceRay);
-    g_ITrace->TraceRay(ray, mask, &trace::filter_navigation, &trace_visible);
-    return !trace_visible.DidHit();
+    Vector left_ray_origin = origin - right * HALF_PLAYER_WIDTH;
+    Vector left_ray_endpos = left_ray_origin + relative_endpos;
+
+    // Left ray hit something
+    if (CastRay(left_ray_origin, left_ray_endpos, mask, &trace::filter_navigation))
+        return false;
+
+    Vector right_ray_origin = origin + right * HALF_PLAYER_WIDTH;
+    Vector right_ray_endpos = right_ray_origin + relative_endpos;
+
+    // Return if the right ray hit something
+    return !CastRay(right_ray_origin, right_ray_endpos, mask, &trace::filter_navigation);
 }
 
 Vector GetClosestCornerToArea(CNavArea *CornerOf, const Vector &target)
@@ -149,11 +181,11 @@ public:
             edge1.z += PLAYER_JUMP_HEIGHT;
             edge2.z += PLAYER_JUMP_HEIGHT;
 
-            // if (IsPlayerPassableNavigation(edge1, edge2))
-            //{
-            float cost = connection.area->m_center.DistTo(area.m_center);
-            adjacent->push_back(micropather::StateCost{ reinterpret_cast<void *>(connection.area), cost });
-            //}
+            if (IsPlayerPassableNavigation(edge1, edge2))
+            {
+                float cost = connection.area->m_center.DistTo(area.m_center);
+                adjacent->push_back(micropather::StateCost{ reinterpret_cast<void *>(connection.area), cost });
+            }
         }
     }
 
@@ -402,7 +434,7 @@ void Draw()
         Vector start_screen, end_screen;
         if (draw::WorldToScreen(start_pos, start_screen))
         {
-            draw::Rectangle(start_screen.x - 10.0f, start_screen.y - 10.0f, 10.0f, 10.0f, colors::white);
+            draw::Rectangle(start_screen.x - 5.0f, start_screen.y - 5.0f, 10.0f, 10.0f, colors::white);
 
             if (i < crumbs.size() - 1)
             {
@@ -424,6 +456,10 @@ static CatCommand nav_path("nav_path", "Debug nav path", []() { NavEngine::navTo
 
 static CatCommand nav_path_no_local("nav_path_no_local", "Debug nav path", []() { NavEngine::navTo(loc, 5, false, false, false); });
 
+static CatCommand nav_init("nav_init", "Reload nav mesh", []() {
+    NavEngine::map.reset();
+    NavEngine::LevelInit();
+});
 static InitRoutine init([]() {
     // this is a comment
     // so this doesn't get one linered
