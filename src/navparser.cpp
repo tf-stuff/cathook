@@ -175,13 +175,15 @@ public:
         CNavArea &area = *reinterpret_cast<CNavArea *>(main);
         for (NavConnect &connection : area.m_connections)
         {
-            auto edge1 = area.getNearestEdge(connection.area->m_center.AsVector2D());
-            auto edge2 = connection.area->getNearestEdge(area.m_center.AsVector2D());
+            // Get the closest side of the adjacent area
+            auto adjacent_edge = connection.area->getNearestEdge(area.m_center.AsVector2D());
+            // Use closest point on our nav area
+            auto main_closest = area.getNearestPoint(adjacent_edge.AsVector2D());
 
-            edge1.z += PLAYER_JUMP_HEIGHT;
-            edge2.z += PLAYER_JUMP_HEIGHT;
+            main_closest.z += PLAYER_JUMP_HEIGHT;
+            adjacent_edge.z += PLAYER_JUMP_HEIGHT;
 
-            if (IsPlayerPassableNavigation(edge1, edge2))
+            if (IsPlayerPassableNavigation(main_closest, adjacent_edge))
             {
                 float cost = connection.area->m_center.DistTo(area.m_center);
                 adjacent->push_back(micropather::StateCost{ reinterpret_cast<void *>(connection.area), cost });
@@ -285,6 +287,7 @@ void handleTightDropdowns(std::vector<Crumb> &crumbs)
         to_target.NormalizeInPlace();
         Vector angles;
         VectorAngles(to_target, angles);
+        // This part is 100% wrong as GetForwardVector adds "crumb_a" to the forward vector
         auto vecTargetForward = GetForwardVector(crumb_a, angles, HALF_PLAYER_WIDTH);
         crumb_b += vecTargetForward;
     }
@@ -311,8 +314,23 @@ bool navTo(const Vector &destination, int priority, bool should_repath, bool nav
         if (path.empty())
             return false;
     }
-    for (void *area : path)
-        crumbs.push_back({ reinterpret_cast<CNavArea *>(area), reinterpret_cast<CNavArea *>(area)->m_center });
+    for (size_t i = 0; i < path.size(); i++)
+    {
+        CNavArea *area = reinterpret_cast<CNavArea *>(path.at(i));
+        crumbs.push_back({ area, area->m_center });
+
+        // All entries besides the last need an extra crumb
+        if (i != path.size() - 1)
+        {
+            CNavArea *next_area = (CNavArea *) path.at(i + 1);
+
+            // Get the nearest edge of the next area we plan to go to
+            Vector closest_edge = next_area->getNearestEdge(area->m_center.AsVector2D());
+            // Calculate closest point on main area to the edge
+            Vector main_closest = area->getNearestPoint(closest_edge.AsVector2D());
+            crumbs.push_back({ area, main_closest });
+        }
+    }
     // handleTightDropdowns(crumbs);
 
     return true;
@@ -393,19 +411,23 @@ void LevelInit()
 void drawNavArea(CNavArea *area)
 {
     Vector nw, ne, sw, se;
-    draw::WorldToScreen(area->m_nwCorner, nw);
-    draw::WorldToScreen(area->getNeCorner(), ne);
-    draw::WorldToScreen(area->getSwCorner(), sw);
-    draw::WorldToScreen(area->m_seCorner, se);
+    bool nw_screen = draw::WorldToScreen(area->m_nwCorner, nw);
+    bool ne_screen = draw::WorldToScreen(area->getNeCorner(), ne);
+    bool sw_screen = draw::WorldToScreen(area->getSwCorner(), sw);
+    bool se_screen = draw::WorldToScreen(area->m_seCorner, se);
 
     // Nw -> Ne
-    draw::Line(nw.x, nw.y, ne.x - nw.x, ne.y - nw.y, colors::green, 1.0f);
+    if (nw_screen && ne_screen)
+        draw::Line(nw.x, nw.y, ne.x - nw.x, ne.y - nw.y, colors::green, 1.0f);
     // Nw -> Sw
-    draw::Line(nw.x, nw.y, sw.x - nw.x, sw.y - nw.y, colors::green, 1.0f);
+    if (nw_screen && sw_screen)
+        draw::Line(nw.x, nw.y, sw.x - nw.x, sw.y - nw.y, colors::green, 1.0f);
     // Ne -> Se
-    draw::Line(ne.x, ne.y, se.x - ne.x, se.y - ne.y, colors::green, 1.0f);
+    if (ne_screen && se_screen)
+        draw::Line(ne.x, ne.y, se.x - ne.x, se.y - ne.y, colors::green, 1.0f);
     // Sw -> Se
-    draw::Line(sw.x, sw.y, se.x - sw.x, se.y - sw.y, colors::green, 1.0f);
+    if (sw_screen && se_screen)
+        draw::Line(sw.x, sw.y, se.x - sw.x, se.y - sw.y, colors::green, 1.0f);
 }
 
 void Draw()
@@ -415,12 +437,11 @@ void Draw()
     if (draw_debug_areas && CE_GOOD(LOCAL_E) && LOCAL_E->m_bAlivePlayer())
     {
         auto area = map->findClosestNavSquare(g_pLocalPlayer->v_Origin);
-        auto edge = area->getNearestEdge(g_pLocalPlayer->v_Origin.AsVector2D());
+        auto edge = area->getNearestPoint(g_pLocalPlayer->v_Origin.AsVector2D());
         Vector scrEdge;
         edge.z += PLAYER_JUMP_HEIGHT;
-        draw::WorldToScreen(edge, scrEdge);
-
-        draw::Rectangle(scrEdge.x - 2.0f, scrEdge.y - 2.0f, 4.0f, 4.0f, colors::red);
+        if (draw::WorldToScreen(edge, scrEdge))
+            draw::Rectangle(scrEdge.x - 2.0f, scrEdge.y - 2.0f, 4.0f, 4.0f, colors::red);
         drawNavArea(area);
     }
 
