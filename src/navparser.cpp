@@ -6,6 +6,7 @@
 #endif
 
 #include <memory>
+#include <boost/container_hash/hash.hpp>
 
 namespace navparser
 {
@@ -18,9 +19,10 @@ static settings::Boolean enabled("nav.enabled", "false");
 static settings::Boolean draw("nav.draw", "false");
 static settings::Boolean draw_debug_areas("nav.draw.debug-areas", "false");
 static settings::Boolean log_pathing{ "nav.log", "false" };
+static settings::Int stuck_time{ "nav.stuck-time", "4000" };
 
 // Cast a Ray and return if it hit
-bool CastRay(Vector origin, Vector endpos, unsigned mask, ITraceFilter *filter)
+static bool CastRay(Vector origin, Vector endpos, unsigned mask, ITraceFilter *filter)
 {
     trace_t trace;
     Ray_t ray;
@@ -79,7 +81,7 @@ bool IsPlayerPassable(Vector origin, Vector target, bool enviroment_only, Cached
 }
 
 // Vischeck that considers player width
-bool IsPlayerPassableNavigation(Vector origin, Vector target, unsigned int mask = MASK_PLAYERSOLID)
+static bool IsPlayerPassableNavigation(Vector origin, Vector target, unsigned int mask = MASK_PLAYERSOLID)
 {
     Vector tr = target - origin;
     Vector angles;
@@ -106,51 +108,25 @@ bool IsPlayerPassableNavigation(Vector origin, Vector target, unsigned int mask 
     return !CastRay(right_ray_origin, right_ray_endpos, mask, &trace::filter_navigation);
 }
 
-Vector GetClosestCornerToArea(CNavArea *CornerOf, const Vector &target)
-{
-    std::array<Vector, 4> corners{
-        CornerOf->m_nwCorner,                                                       // NW
-        CornerOf->m_seCorner,                                                       // SE
-        { CornerOf->m_seCorner.x, CornerOf->m_nwCorner.y, CornerOf->m_nwCorner.z }, // NE
-        { CornerOf->m_nwCorner.x, CornerOf->m_seCorner.y, CornerOf->m_seCorner.z }  // SW
-    };
-
-    Vector *bestVec = &corners[0], *bestVec2 = bestVec;
-    float bestDist = corners[0].DistTo(target), bestDist2 = bestDist;
-
-    for (size_t i = 1; i < corners.size(); i++)
-    {
-        float dist = corners[i].DistTo(target);
-        if (dist < bestDist)
-        {
-            bestVec  = &corners[i];
-            bestDist = dist;
-        }
-        if (corners[i] == *bestVec2)
-            continue;
-
-        if (dist < bestDist2)
-        {
-            bestVec2  = &corners[i];
-            bestDist2 = dist;
-        }
-    }
-    return (*bestVec + *bestVec2) / 2;
-}
-
-float getZBetweenAreas(CNavArea *start, CNavArea *end)
-{
-    float z1 = GetClosestCornerToArea(start, end->m_center).z;
-    float z2 = GetClosestCornerToArea(end, start->m_center).z;
-
-    return z2 - z1;
-}
-
 enum class NavState
 {
     Unavailable = 0,
     Active
 };
+
+struct ConnectionInfo
+{
+    int expire_tick;
+    bool vischeck_state;
+};
+
+static std::pair<CNavArea *, CNavArea *> sortAreas(CNavArea *first, CNavArea *second)
+{
+    if (first > second)
+        return { first, second };
+    else
+        return { second, first };
+}
 
 class Map : public micropather::Graph
 {
@@ -159,6 +135,8 @@ public:
     NavState state;
     micropather::MicroPather pather{ this, 3000, 6, true };
     std::string mapname;
+    std::unordered_map<std::pair<CNavArea *, CNavArea *>, ConnectionInfo, boost::hash<std::pair<CNavArea *, CNavArea *>>> connections;
+
     Map(const char *mapname) : navfile(mapname), mapname(mapname)
     {
         if (!navfile.m_isOK)
@@ -175,18 +153,35 @@ public:
         CNavArea &area = *reinterpret_cast<CNavArea *>(main);
         for (NavConnect &connection : area.m_connections)
         {
-            // Get the closest side of the adjacent area
-            auto adjacent_edge = connection.area->getNearestEdge(area.m_center.AsVector2D());
-            // Use closest point on our nav area
-            auto main_closest = area.getNearestPoint(adjacent_edge.AsVector2D());
-
-            main_closest.z += PLAYER_JUMP_HEIGHT;
-            adjacent_edge.z += PLAYER_JUMP_HEIGHT;
-
-            if (IsPlayerPassableNavigation(main_closest, adjacent_edge))
+            auto key    = sortAreas(&area, connection.area);
+            auto cached = connections.find(key);
+            if (cached != connections.end())
             {
-                float cost = connection.area->m_center.DistTo(area.m_center);
-                adjacent->push_back(micropather::StateCost{ reinterpret_cast<void *>(connection.area), cost });
+                if (cached->second.vischeck_state)
+                {
+                    float cost = connection.area->m_center.DistTo(area.m_center);
+                    adjacent->push_back(micropather::StateCost{ reinterpret_cast<void *>(connection.area), cost });
+                }
+            }
+            else
+            {
+                // Use closest point on our nav area
+                auto main_closest = area.getNearestPoint(connection.area->m_center.AsVector2D());
+                auto center       = connection.area->m_center;
+
+                main_closest.z += PLAYER_JUMP_HEIGHT;
+                center.z += PLAYER_JUMP_HEIGHT;
+
+                if (IsPlayerPassableNavigation(main_closest, center))
+                {
+                    float cost = connection.area->m_center.DistTo(area.m_center);
+                    adjacent->push_back(micropather::StateCost{ reinterpret_cast<void *>(connection.area), cost });
+                    connections[key] = { g_GlobalVars->tickcount + int(10 / g_GlobalVars->interval_per_tick), true };
+                }
+                else
+                {
+                    connections[key] = { g_GlobalVars->tickcount + int(10 / g_GlobalVars->interval_per_tick), false };
+                }
             }
         }
     }
@@ -246,6 +241,33 @@ public:
         return pathNodes;
     }
 
+    void updateIgnores()
+    {
+        static Timer despam;
+        if (!despam.test_and_set(1000))
+            return;
+        bool erased = false;
+        // When we switch to c++20, we can use std::erase_if TODO: FIXME
+        for (auto it = begin(connections); it != end(connections);)
+        {
+            if (it->second.expire_tick < g_GlobalVars->tickcount)
+            {
+                it     = connections.erase(it); // previously this was something like m_map.erase(it++);
+                erased = true;
+            }
+            else
+                ++it;
+        }
+        if (erased)
+            pather.Reset();
+    }
+
+    void Reset()
+    {
+        connections.clear();
+        pather.Reset();
+    }
+
     // Uncesseray thing that is sadly necessary
     void PrintStateInfo(void *) override
     {
@@ -280,18 +302,17 @@ void handleTightDropdowns(std::vector<Crumb> &crumbs)
         Vector &crumb_b = crumbs[i + 1].vec;
 
         Vector to_target = (crumb_b - crumb_a);
-        // Is an actual dropdown/drops more than player jump height?
-        if (to_target.z > PLAYER_JUMP_HEIGHT)
+        if (-to_target.z > PLAYER_JUMP_HEIGHT * 2)
             continue;
         to_target.z = 0;
         to_target.NormalizeInPlace();
         Vector angles;
         VectorAngles(to_target, angles);
-        // This part is 100% wrong as GetForwardVector adds "crumb_a" to the forward vector
-        auto vecTargetForward = GetForwardVector(crumb_a, angles, HALF_PLAYER_WIDTH);
-        crumb_b += vecTargetForward;
+        crumb_b = GetForwardVector(crumb_b, angles, HALF_PLAYER_WIDTH);
     }
 }
+
+static Timer inactivity{};
 
 bool navTo(const Vector &destination, int priority, bool should_repath, bool nav_to_local, bool is_repath)
 {
@@ -317,7 +338,6 @@ bool navTo(const Vector &destination, int priority, bool should_repath, bool nav
     for (size_t i = 0; i < path.size(); i++)
     {
         CNavArea *area = reinterpret_cast<CNavArea *>(path.at(i));
-        crumbs.push_back({ area, area->m_center });
 
         // All entries besides the last need an extra crumb
         if (i != path.size() - 1)
@@ -325,13 +345,14 @@ bool navTo(const Vector &destination, int priority, bool should_repath, bool nav
             CNavArea *next_area = (CNavArea *) path.at(i + 1);
 
             // Get the nearest edge of the next area we plan to go to
-            Vector closest_edge = next_area->getNearestEdge(area->m_center.AsVector2D());
-            // Calculate closest point on main area to the edge
-            Vector main_closest = area->getNearestPoint(closest_edge.AsVector2D());
-            crumbs.push_back({ area, main_closest });
+            Vector closest_point = area->getNearestPoint(next_area->m_center.AsVector2D());
+            crumbs.push_back({ area, std::move(closest_point) });
         }
+        else
+            crumbs.push_back({ area, area->m_center });
     }
-    // handleTightDropdowns(crumbs);
+    handleTightDropdowns(crumbs);
+    inactivity.update();
 
     return true;
 }
@@ -351,6 +372,11 @@ bool navTo(const Vector &destination, int priority, bool should_repath, bool nav
     return DotProduct(to_target, vecTargetForward) <= 0.0f;
 }*/
 
+static Timer last_jump{};
+// Used to determine if we want to jump or if we want to crouch
+static bool crouch          = false;
+static int ticks_since_jump = 0;
+
 static void FollowCrumbs()
 {
     size_t crumbs_amount = crumbs.size();
@@ -364,6 +390,35 @@ static void FollowCrumbs()
         crumbs.erase(crumbs.begin());
         if (!--crumbs_amount)
             return;
+        inactivity.update();
+    }
+
+    // Detect when jumping is necessary
+    if ((!(g_pLocalPlayer->holding_sniper_rifle && g_pLocalPlayer->bZoomed) && (crouch || crumbs[0].vec.z - g_pLocalPlayer->v_Origin.z > 18) && last_jump.check(200)) || (last_jump.check(200) && inactivity.check(*stuck_time / 2)))
+    {
+        auto local = map->findClosestNavSquare(g_pLocalPlayer->v_Origin);
+        // Check if current area allows jumping
+        if (!local || !(local->m_attributeFlags & (NAV_MESH_NO_JUMP | NAV_MESH_STAIRS)))
+        {
+            // Make it crouch until we land, but jump the first tick
+            current_user_cmd->buttons |= crouch ? IN_DUCK : IN_JUMP;
+
+            // Only flip to crouch state, not to jump state
+            if (!crouch)
+            {
+                crouch           = true;
+                ticks_since_jump = 0;
+            }
+            ticks_since_jump++;
+
+            // Update jump timer now since we are back on ground
+            if (crouch && CE_INT(LOCAL_E, netvar.iFlags) & FL_ONGROUND && ticks_since_jump > 3)
+            {
+                // Reset
+                crouch = false;
+                last_jump.update();
+            }
+        }
     }
 
     WalkTo(crumbs[0].vec);
@@ -404,6 +459,10 @@ void LevelInit()
         std::snprintf(nav_path, sizeof(nav_path), "%s/tf/%s.nav", cwd, lvl_name);
         logging::Info("Pathing: Nav File location: %s", nav_path);
         map = std::make_unique<Map>(nav_path);
+    }
+    else
+    {
+        map->Reset();
     }
 }
 
@@ -475,12 +534,34 @@ static CatCommand nav_set("nav_set", "Debug nav find", []() { loc = g_pLocalPlay
 
 static CatCommand nav_path("nav_path", "Debug nav path", []() { NavEngine::navTo(loc, 5, false, true, false); });
 
-static CatCommand nav_path_no_local("nav_path_no_local", "Debug nav path", []() { NavEngine::navTo(loc, 5, false, false, false); });
-
 static CatCommand nav_init("nav_init", "Reload nav mesh", []() {
     NavEngine::map.reset();
     NavEngine::LevelInit();
 });
+
+static CatCommand nav_debug_("nav_debug_check", "Perform nav checks between two areas. First area: cat_nav_set Second area: Your location while running this command.", []() {
+    if (!NavEngine::isReady())
+        return;
+    auto area1 = NavEngine::map->findClosestNavSquare(loc);
+    auto area2 = NavEngine::map->findClosestNavSquare(g_pLocalPlayer->v_Origin);
+
+    // Use closest point on our nav area
+    auto main_closest = area1->getNearestPoint(area2->m_center.AsVector2D());
+    auto center       = area2->m_center;
+
+    main_closest.z += PLAYER_JUMP_HEIGHT;
+    center.z += PLAYER_JUMP_HEIGHT;
+
+    if (IsPlayerPassableNavigation(main_closest, center))
+    {
+        logging::Info("Nav: Area is player passable!");
+    }
+    else
+    {
+        logging::Info("Nav: Area is NOT player passable! %.2f,%.2f,%.2f %.2f,%.2f,%.2f", main_closest.x, main_closest.y, main_closest.z, center.x, center.y, center.z);
+    }
+});
+
 static InitRoutine init([]() {
     // this is a comment
     // so this doesn't get one linered
