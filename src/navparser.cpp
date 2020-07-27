@@ -302,7 +302,7 @@ void handleTightDropdowns(std::vector<Crumb> &crumbs)
         Vector &crumb_b = crumbs[i + 1].vec;
 
         Vector to_target = (crumb_b - crumb_a);
-        if (-to_target.z > PLAYER_JUMP_HEIGHT * 2)
+        if (-to_target.z <= PLAYER_JUMP_HEIGHT * 2)
             continue;
         to_target.z = 0;
         to_target.NormalizeInPlace();
