@@ -1,3 +1,22 @@
+/*
+    This file is part of Cathook.
+
+    Cathook is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Cathook is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with Cathook. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// Codeowners: TotallyNotElite
+
 #include "common.hpp"
 #include "micropather.h"
 #include "CNavFile.h"
@@ -19,7 +38,7 @@ static settings::Boolean enabled("nav.enabled", "false");
 static settings::Boolean draw("nav.draw", "false");
 static settings::Boolean draw_debug_areas("nav.draw.debug-areas", "false");
 static settings::Boolean log_pathing{ "nav.log", "false" };
-static settings::Int stuck_time{ "nav.stuck-time", "4000" };
+static settings::Int stuck_time{ "nav.stuck-time", "1000" };
 
 // Cast a Ray and return if it hit
 static bool CastRay(Vector origin, Vector endpos, unsigned mask, ITraceFilter *filter)
@@ -36,48 +55,6 @@ static bool CastRay(Vector origin, Vector endpos, unsigned mask, ITraceFilter *f
     g_ITrace->TraceRay(ray, mask, filter, &trace);
 
     return trace.DidHit();
-}
-
-// Vischeck that considers player width
-bool IsPlayerPassable(Vector origin, Vector target, bool enviroment_only, CachedEntity *self = LOCAL_E, unsigned int mask = MASK_PLAYERSOLID)
-{
-    Vector tr = target - origin;
-    Vector angles;
-    VectorAngles(tr, angles);
-
-    Vector forward, right, up;
-    AngleVectors3(VectorToQAngle(angles), &forward, &right, &up);
-    right.z = 0;
-
-    // We want to keep the same angle for these two bounding box traces
-    Vector relative_endpos = forward * tr.Length();
-
-    ITraceFilter *filter = nullptr;
-    if (!enviroment_only)
-    {
-        if (self)
-            trace::filter_no_player.SetSelf(RAW_ENT(self));
-        filter = &trace::filter_no_player;
-    }
-    else
-    {
-        if (self)
-            trace::filter_no_entity.SetSelf(RAW_ENT(self));
-        filter = &trace::filter_no_entity;
-    }
-
-    Vector left_ray_origin = origin - right * HALF_PLAYER_WIDTH;
-    Vector left_ray_endpos = left_ray_origin + relative_endpos;
-
-    // Left ray hit something
-    if (CastRay(left_ray_origin, left_ray_endpos, mask, filter))
-        return false;
-
-    Vector right_ray_origin = origin + right * HALF_PLAYER_WIDTH;
-    Vector right_ray_endpos = right_ray_origin + relative_endpos;
-
-    // Return if the right ray hit something
-    return !CastRay(right_ray_origin, right_ray_endpos, mask, filter);
 }
 
 // Vischeck that considers player width
@@ -114,12 +91,24 @@ enum class NavState
     Active
 };
 
-struct ConnectionInfo
+struct CachedConnection
 {
     int expire_tick;
     bool vischeck_state;
 };
 
+struct ConnectionInfo
+{
+    enum State
+    {
+        // Tried using this connection, failed for some reason
+        STUCK,
+    };
+    int expire_tick;
+    State state;
+};
+
+// Hacky hack to keep the key of an std::unordered_map<std::pair<CNavArea *, CNavArea *>, foobar> the same as long as the same 2 areas are passed
 static std::pair<CNavArea *, CNavArea *> sortAreas(CNavArea *first, CNavArea *second)
 {
     if (first > second)
@@ -135,7 +124,7 @@ public:
     NavState state;
     micropather::MicroPather pather{ this, 3000, 6, true };
     std::string mapname;
-    std::unordered_map<std::pair<CNavArea *, CNavArea *>, ConnectionInfo, boost::hash<std::pair<CNavArea *, CNavArea *>>> connections;
+    std::unordered_map<std::pair<CNavArea *, CNavArea *>, CachedConnection, boost::hash<std::pair<CNavArea *, CNavArea *>>> vischeck_cache;
 
     Map(const char *mapname) : navfile(mapname), mapname(mapname)
     {
@@ -153,11 +142,26 @@ public:
         CNavArea &area = *reinterpret_cast<CNavArea *>(main);
         for (NavConnect &connection : area.m_connections)
         {
+            // Gets a vector on the edge of the current area that is as close as possible to the center of the next area
+            auto current_closest = area.getNearestPoint(connection.area->m_center.AsVector2D());
+            // Gets a vector on the edge of the next area that is as close as possible to current_cloest
+            auto next_closest = connection.area->getNearestPoint(current_closest.AsVector2D());
+
+            float height_diff = next_closest.z - current_closest.z;
+            bool allowed      = height_diff <= -PLAYER_JUMP_HEIGHT;
+
+            // Too high for us to jump!
+            if (height_diff > PLAYER_JUMP_HEIGHT)
+                continue;
+
+            current_closest.z += PLAYER_JUMP_HEIGHT;
+            next_closest.z += PLAYER_JUMP_HEIGHT;
+
             auto key    = sortAreas(&area, connection.area);
-            auto cached = connections.find(key);
-            if (cached != connections.end())
+            auto cached = vischeck_cache.find(key);
+            if (cached != vischeck_cache.end())
             {
-                if (cached->second.vischeck_state)
+                if (cached->second.vischeck_state || allowed)
                 {
                     float cost = connection.area->m_center.DistTo(area.m_center);
                     adjacent->push_back(micropather::StateCost{ reinterpret_cast<void *>(connection.area), cost });
@@ -165,22 +169,21 @@ public:
             }
             else
             {
-                // Use closest point on our nav area
-                auto main_closest = area.getNearestPoint(connection.area->m_center.AsVector2D());
-                auto center       = connection.area->m_center;
-
-                main_closest.z += PLAYER_JUMP_HEIGHT;
-                center.z += PLAYER_JUMP_HEIGHT;
-
-                if (IsPlayerPassableNavigation(main_closest, center))
+                // 1. Check if this is a dropdown. It's in our best interest to trust the navmesh about dropdowns (bool allowed statement above)
+                // 2. If not a dropdown, check if there is direct line of sight
+                if (IsPlayerPassableNavigation(current_closest, next_closest))
                 {
-                    float cost = connection.area->m_center.DistTo(area.m_center);
-                    adjacent->push_back(micropather::StateCost{ reinterpret_cast<void *>(connection.area), cost });
-                    connections[key] = { g_GlobalVars->tickcount + int(10 / g_GlobalVars->interval_per_tick), true };
+                    vischeck_cache[key] = { g_GlobalVars->tickcount + int(10 / g_GlobalVars->interval_per_tick), true };
+                    allowed             = true;
                 }
                 else
                 {
-                    connections[key] = { g_GlobalVars->tickcount + int(10 / g_GlobalVars->interval_per_tick), false };
+                    vischeck_cache[key] = { g_GlobalVars->tickcount + int(10 / g_GlobalVars->interval_per_tick), false };
+                }
+                if (allowed)
+                {
+                    float cost = connection.area->m_center.DistTo(area.m_center);
+                    adjacent->push_back(micropather::StateCost{ reinterpret_cast<void *>(connection.area), cost });
                 }
             }
         }
@@ -248,11 +251,11 @@ public:
             return;
         bool erased = false;
         // When we switch to c++20, we can use std::erase_if TODO: FIXME
-        for (auto it = begin(connections); it != end(connections);)
+        for (auto it = begin(vischeck_cache); it != end(vischeck_cache);)
         {
             if (it->second.expire_tick < g_GlobalVars->tickcount)
             {
-                it     = connections.erase(it); // previously this was something like m_map.erase(it++);
+                it     = vischeck_cache.erase(it); // previously this was something like m_map.erase(it++);
                 erased = true;
             }
             else
@@ -262,9 +265,31 @@ public:
             pather.Reset();
     }
 
+    /*bool addIgnoreTime(CNavArea *begin, CNavArea *end, Timer &time)
+    {
+        if (!begin || !end)
+        {
+            return true;
+        }
+        using namespace std::chrono;
+        // Check if connection is already known
+        if (ignores.find({ begin, end }) == ignores.end())
+        {
+            ignores[{ begin, end }] = {};
+        }
+        ignoredata &connection = ignores[{ begin, end }];
+        connection.stucktime += duration_cast<milliseconds>(system_clock::now() - time.last).count();
+        if (connection.stucktime >= *stuck_time)
+        {
+            logging::Info("Ignored Connection %i-%i", begin->m_id, end->m_id);
+            return addTime(connection, explicit_ignored);
+        }
+        return false;
+    }*/
+
     void Reset()
     {
-        connections.clear();
+        vischeck_cache.clear();
         pather.Reset();
     }
 
@@ -351,6 +376,8 @@ bool navTo(const Vector &destination, int priority, bool should_repath, bool nav
         else
             crumbs.push_back({ area, area->m_center });
     }
+    crumbs.push_back({ nullptr, destination });
+
     handleTightDropdowns(crumbs);
     inactivity.update();
 
@@ -376,6 +403,7 @@ static Timer last_jump{};
 // Used to determine if we want to jump or if we want to crouch
 static bool crouch          = false;
 static int ticks_since_jump = 0;
+static float last_dist;
 
 static void FollowCrumbs()
 {
@@ -392,8 +420,14 @@ static void FollowCrumbs()
             return;
         inactivity.update();
     }
+    // If we make any progress at all, reset this
+    else if (!LOCAL_E->m_vecVelocity.IsZero(100.0f))
+        inactivity.update();
 
-    // Detect when jumping is necessary
+    // Detect when jumping is necessary.
+    // 1. No jumping if zoomed
+    // 2. Jump if its necessary to do so based on z values
+    // 3. Jump if stuck (not getting closer) for more than stuck_time/2 (500ms)
     if ((!(g_pLocalPlayer->holding_sniper_rifle && g_pLocalPlayer->bZoomed) && (crouch || crumbs[0].vec.z - g_pLocalPlayer->v_Origin.z > 18) && last_jump.check(200)) || (last_jump.check(200) && inactivity.check(*stuck_time / 2)))
     {
         auto local = map->findClosestNavSquare(g_pLocalPlayer->v_Origin);
@@ -420,6 +454,15 @@ static void FollowCrumbs()
             }
         }
     }
+
+    /*if (inactivity.check(*stuck_time) || (inactivity.check(*unreachable_time) && !IsVectorVisible(g_pLocalPlayer->v_Origin, *crumb_vec + Vector(.0f, .0f, 41.5f), false, LOCAL_E, MASK_PLAYERSOLID)))
+    {
+        if (crumbs[0].navarea)
+            ignoremanager::addTime(last_area, *crumb, inactivity);
+
+        repath();
+        return;
+    }*/
 
     WalkTo(crumbs[0].vec);
 }
@@ -542,23 +585,24 @@ static CatCommand nav_init("nav_init", "Reload nav mesh", []() {
 static CatCommand nav_debug_("nav_debug_check", "Perform nav checks between two areas. First area: cat_nav_set Second area: Your location while running this command.", []() {
     if (!NavEngine::isReady())
         return;
-    auto area1 = NavEngine::map->findClosestNavSquare(loc);
-    auto area2 = NavEngine::map->findClosestNavSquare(g_pLocalPlayer->v_Origin);
+    auto current = NavEngine::map->findClosestNavSquare(g_pLocalPlayer->v_Origin);
+    auto next    = NavEngine::map->findClosestNavSquare(loc);
 
-    // Use closest point on our nav area
-    auto main_closest = area1->getNearestPoint(area2->m_center.AsVector2D());
-    auto center       = area2->m_center;
+    // Gets a vector on the edge of the current area that is as close as possible to the center of the next area
+    auto current_closest = current->getNearestPoint(next->m_center.AsVector2D());
+    // Gets a vector on the edge of the next area that is as close as possible to current_cloest
+    auto next_closest = next->getNearestPoint(current_closest.AsVector2D());
 
-    main_closest.z += PLAYER_JUMP_HEIGHT;
-    center.z += PLAYER_JUMP_HEIGHT;
+    current_closest.z += PLAYER_JUMP_HEIGHT;
+    next_closest.z += PLAYER_JUMP_HEIGHT;
 
-    if (IsPlayerPassableNavigation(main_closest, center))
+    if (IsPlayerPassableNavigation(current_closest, next_closest))
     {
         logging::Info("Nav: Area is player passable!");
     }
     else
     {
-        logging::Info("Nav: Area is NOT player passable! %.2f,%.2f,%.2f %.2f,%.2f,%.2f", main_closest.x, main_closest.y, main_closest.z, center.x, center.y, center.z);
+        logging::Info("Nav: Area is NOT player passable! %.2f,%.2f,%.2f %.2f,%.2f,%.2f", current_closest.x, current_closest.y, current_closest.z, next_closest.x, next_closest.y, next_closest.z);
     }
 });
 
