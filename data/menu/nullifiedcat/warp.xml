@@ -34,6 +34,7 @@
                         <Option name="Toggle" value="3"/>
                     </Select>
                 </LabeledObject>
+                <AutoVariable width="fill" target="warp.rapidfire.zoom" label="Insta zoom" tooltip="If enabled, will allow you to zoom in instantly and skip the headshot delay."/>
             </List>
         </Box>
     </Box>

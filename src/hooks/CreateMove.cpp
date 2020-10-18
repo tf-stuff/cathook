@@ -21,11 +21,11 @@
 #include "Warp.hpp"
 
 static settings::Boolean minigun_jump{ "misc.minigun-jump-tf2c", "false" };
-static settings::Boolean roll_speedhack{ "misc.roll-speedhack", "false" };
-static settings::Boolean forward_speedhack{ "misc.roll-speedhack.forward", "false" };
+settings::Boolean roll_speedhack{ "misc.roll-speedhack", "false" };
+settings::Boolean forward_speedhack{ "misc.roll-speedhack.forward", "false" };
 static settings::Boolean engine_pred{ "misc.engine-prediction", "true" };
 static settings::Boolean debug_projectiles{ "debug.projectiles", "false" };
-static settings::Int fullauto{ "misc.full-auto", "0" };
+settings::Int fullauto{ "misc.full-auto", "0" };
 static settings::Boolean fuckmode{ "misc.fuckmode", "false" };
 
 class CMoveData;

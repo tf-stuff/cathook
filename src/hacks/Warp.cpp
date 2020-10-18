@@ -14,6 +14,7 @@
 #include "DetourHook.hpp"
 #include "WeaponData.hpp"
 #include "MiscTemporary.hpp"
+#include "WarpCreatemove.hpp"
 
 namespace hacks::tf2::warp
 {
@@ -21,6 +22,7 @@ static settings::Boolean enabled{ "warp.enabled", "false" };
 static settings::Boolean no_movement{ "warp.rapidfire.no-movement", "true" };
 static settings::Boolean rapidfire{ "warp.rapidfire", "false" };
 static settings::Boolean wait_full{ "warp.rapidfire.wait-full", "true" };
+static settings::Boolean rapid_zoom{ "warp.rapidfire.zoom", "true" };
 static settings::Button rapidfire_key{ "warp.rapidfire.key", "<null>" };
 static settings::Int rapidfire_key_mode{ "warp.rapidfire.key-mode", "1" };
 static settings::Float speed{ "warp.speed", "23" };
@@ -42,16 +44,19 @@ static settings::Boolean warp_right{ "warp.on-hit.right", "true" };
 // Hidden control rvars for communtiy servers
 static settings::Int maxusrcmdprocessticks("warp.maxusrcmdprocessticks", "24");
 
-bool in_warp      = false;
-bool in_rapidfire = false;
+static bool in_warp           = false;
+static bool in_rapidfire      = false;
+static bool in_rapidfire_zoom = false;
 // Should we choke the packet or not? (in rapidfire)
-bool choke_packet = false;
+static bool choke_packet = false;
 // Were we warping last tick?
 // why is this needed at all, why do i have to write this janky bs
-bool was_in_warp = false;
+static bool was_in_warp = false;
+// Mainly needed for sniper rifle logic
+static bool first_warp_tick = false;
 
-// How many ticks we have to add to our CreateMove packet
-int ticks_to_add = 0;
+// Original curtime in rapidfire zoom
+static float original_curtime = 0.0f;
 
 int GetMaxWarpTicks();
 void warpLogic();
@@ -109,6 +114,11 @@ bool UpdateRFKey()
     return allow_key;
 }
 
+bool canInstaZoom()
+{
+    return in_rapidfire_zoom || (g_pLocalPlayer->holding_sniper_rifle && current_user_cmd->buttons & IN_ATTACK2 && !HasCondition<TFCond_Zoomed>(LOCAL_E) && CE_FLOAT(LOCAL_W, netvar.flNextSecondaryAttack) <= g_GlobalVars->curtime);
+}
+
 bool shouldRapidfire()
 {
     if (!rapidfire)
@@ -149,6 +159,14 @@ bool shouldRapidfire()
     // Unless we are on a flamethrower, where we only want m2.
     if (LOCAL_W->m_iClassID() == CL_CLASS(CTFFlameThrower))
         buttons_pressed = current_user_cmd && current_user_cmd->buttons & IN_ATTACK2;
+    if (g_pLocalPlayer->holding_sniper_rifle)
+    {
+        // Run if m2 is pressed and sniper rifle is ready
+        buttons_pressed = rapid_zoom && current_user_cmd && current_user_cmd->buttons & IN_ATTACK2 && canInstaZoom();
+        // Heatmaker is the only exception here, it can also run on m1
+        if (!buttons_pressed && HasCondition<TFCond_FocusBuff>(LOCAL_E))
+            buttons_pressed = current_user_cmd && current_user_cmd->buttons & IN_ATTACK;
+    }
 
     return buttons_pressed;
 }
@@ -220,6 +238,12 @@ void Warp(float accumulated_extra_samples, bool finalTick)
 
     CL_Move_t original = (CL_Move_t) cl_move_detour.GetOriginalFunc();
 
+    // Replace with warp specific CreateMove
+    hooks::clientmode.vtable_hooked[2 + offsets::CreateMove()] = (void *) hacks::tf2::warp::WarpCreateMove;
+    // Original address is not stored yet
+    if (!hacks::tf2::warp::original_cm)
+        hacks::tf2::warp::original_cm = (uintptr_t) hooked_methods::original::CreateMove;
+
     // Call CL_Move once for every warp tick
     int warp_amnt = GetWarpAmount(finalTick);
     if (warp_amnt)
@@ -230,6 +254,9 @@ void Warp(float accumulated_extra_samples, bool finalTick)
         int packets_sent = 1;
         for (int i = 0; i < calls; i++)
         {
+            // This the first tick?
+            first_warp_tick = i ? false : true;
+
             // Choke unless we sent too many already
             choke_packet = true;
 
@@ -249,7 +276,6 @@ void Warp(float accumulated_extra_samples, bool finalTick)
             }
             packets_sent++;
         }
-        ticks_to_add = 0;
     }
     cl_move_detour.RestorePatch();
 
@@ -263,6 +289,8 @@ void Warp(float accumulated_extra_samples, bool finalTick)
         if (warp_amount_override)
             warp_amount_override = 0;
     }
+    // Revert createmove vtable change
+    hooks::clientmode.vtable_hooked[2 + offsets::CreateMove()] = (void *) hooked_methods::methods::CreateMove;
 }
 
 int GetMaxWarpTicks()
@@ -346,6 +374,9 @@ static bool was_overridden = false;
 static int ticks_in_revved     = 0;
 static bool replaced_last_tick = false;
 
+// Ticks to ignore m2 for after zoom to make zooming look smooth
+static int ignore_ticks = 0;
+
 // Original Player origin and velocity, needed to not break because our engine pred.
 // We adjust it as the ticks go.
 static Vector original_origin;
@@ -402,6 +433,25 @@ void handleMinigun()
     }
 }
 
+void handleSniper()
+{
+    // Prevent unzooming
+    if (in_rapidfire)
+    {
+        // Holding ready sniper rifle
+        if (canInstaZoom())
+        {
+            current_user_cmd->buttons &= ~IN_ATTACK2;
+            ignore_ticks = TIME_TO_TICKS(0.2f);
+        }
+    }
+    else if (ignore_ticks)
+    {
+        ignore_ticks--;
+        current_user_cmd->buttons &= ~IN_ATTACK2;
+    }
+}
+
 // This is called first, it subsequently calls all the CreateMove functions.
 void CL_Move_hook(float accumulated_extra_samples, bool bFinalTick)
 {
@@ -422,14 +472,17 @@ void CL_Move_hook(float accumulated_extra_samples, bool bFinalTick)
             // Zero out non z movement, it will just get messy else
             original_velocity.x = 0.0f;
             original_velocity.y = 0.0f;
+            if (canInstaZoom())
+                in_rapidfire_zoom = true;
         }
 
         Warp(accumulated_extra_samples, bFinalTick);
         if (warp_amount < GetMaxWarpTicks())
             charged = false;
-        in_warp      = false;
-        in_rapidfire = false;
-        was_in_warp  = true;
+        in_warp           = false;
+        in_rapidfire      = false;
+        in_rapidfire_zoom = false;
+        was_in_warp       = true;
     }
 }
 
@@ -439,13 +492,10 @@ void CreateMoveEarly()
 {
     // Update key state
     key_valid = UpdateRFKey();
-    if (hacks::tf2::warp::in_rapidfire && current_user_cmd)
+    if (hacks::tf2::warp::in_rapidfire)
     {
-        if (current_user_cmd)
-        {
-            g_GlobalVars->tickcount++;
-            current_user_cmd->tick_count++;
-        }
+        g_GlobalVars->tickcount++;
+        current_user_cmd->tick_count++;
     }
 }
 
@@ -467,6 +517,28 @@ void CreateMoveFixPrediction()
             PredictStep(original_origin, original_velocity, gravity, minmax, 0.0f);
             // Restore from the engine prediction
             const_cast<Vector &>(RAW_ENT(LOCAL_E)->GetAbsOrigin()) = original_origin;
+        }
+        // Update zoom time and status
+        if (in_rapidfire_zoom)
+        {
+            static float adjusted_curtime = 0.0f;
+            // Original curtime we need to use while in here
+            if (first_warp_tick)
+            {
+                original_curtime = g_GlobalVars->curtime;
+                adjusted_curtime = original_curtime;
+            }
+
+            // Update the data
+            g_pLocalPlayer->bZoomed     = true;
+            g_pLocalPlayer->flZoomBegin = original_curtime;
+            // Simulate passage of time to make zoom based logic work
+            adjusted_curtime -= g_GlobalVars->interval_per_tick;
+            // Do not exceed headshot time, we can only hs next tick
+            if (original_curtime - adjusted_curtime > 0.2f)
+            {
+                adjusted_curtime = original_curtime - 0.2f - TICKS_TO_TIME(1);
+            }
         }
     }
 }
@@ -502,11 +574,12 @@ void warpLogic()
 {
     if (!enabled)
         return;
-    if (CE_BAD(LOCAL_E) || !LOCAL_E->m_bAlivePlayer())
+    if (CE_BAD(LOCAL_E) || !LOCAL_E->m_bAlivePlayer() || HasCondition<TFCond_HalloweenGhostMode>(LOCAL_E))
         return;
 
-    // Handle minigun in rapidfire
+    // Handle Various weapons in rapidfire
     handleMinigun();
+    handleSniper();
 
     // Charge logic
     if (!shouldWarp(false))
