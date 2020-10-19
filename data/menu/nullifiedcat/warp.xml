@@ -9,6 +9,7 @@
             <AutoVariable width="fill" target="warp.bar-size" label="Bar size"/>
             <AutoVariable width="fill" target="warp.bar-x" label="X position"/>
             <AutoVariable width="fill" target="warp.bar-y" label="Y position"/>
+            <AutoVariable width="fill" target="warp.charge-between-shots" label="Charge between shots" tooltip="Controls if the passive and active charge should charge while you are reloading/switching weapons, etc."/>
             <AutoVariable width="fill" target="warp.charge-passively" label="Charge passively" tooltip="Charge warp passively, e.g. when moving"/>
             <AutoVariable width="fill" target="warp.charge-passively.jump" label="Charge in jump" tooltip="Charge passively in jump, This will make you fall slower"/>
             <AutoVariable width="fill" target="warp.charge-passively.no-inputs" label="Charge when keys released" tooltip="Charge passively before full stop after releasing movement keys"/>

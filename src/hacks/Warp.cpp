@@ -29,6 +29,7 @@ static settings::Float speed{ "warp.speed", "23" };
 static settings::Boolean draw{ "warp.draw", "false" };
 static settings::Button warp_key{ "warp.key", "<null>" };
 static settings::Button charge_key{ "warp.charge-key", "<null>" };
+static settings::Boolean charge_in_cooldown{ "warp.charge-between-shots", "true" };
 static settings::Boolean charge_passively{ "warp.charge-passively", "true" };
 static settings::Boolean charge_in_jump{ "warp.charge-passively.jump", "true" };
 static settings::Boolean charge_no_input{ "warp.charge-passively.no-inputs", "false" };
@@ -531,7 +532,7 @@ void CreateMoveFixPrediction()
 
             // Update the data
             g_pLocalPlayer->bZoomed     = true;
-            g_pLocalPlayer->flZoomBegin = original_curtime;
+            g_pLocalPlayer->flZoomBegin = adjusted_curtime;
             // Simulate passage of time to make zoom based logic work
             adjusted_curtime -= g_GlobalVars->interval_per_tick;
             // Do not exceed headshot time, we can only hs next tick
@@ -611,14 +612,15 @@ void warpLogic()
         if (LOCAL_E->m_bAlivePlayer() && CE_GOOD(LOCAL_W) && LOCAL_W->m_iClassID() == CL_CLASS(CTFMinigun))
             button_block = current_user_cmd->buttons & IN_ATTACK;
 
+        // Logic to nto charge while reloading
+        if (!charge_in_cooldown && (CE_BAD(LOCAL_W) || CE_FLOAT(LOCAL_W, netvar.flNextPrimaryAttack) > g_GlobalVars->curtime || CE_FLOAT(LOCAL_W, netvar.flNextSecondaryAttack) > g_GlobalVars->curtime))
+            should_charge = false;
         // Bunch of checks, if they all pass we are standing still
-        if ((ground_ticks > 1 || charge_in_jump) && (charge_no_input || velocity.IsZero()) && !HasCondition<TFCond_Charging>(LOCAL_E) && !current_user_cmd->forwardmove && !current_user_cmd->sidemove && !current_user_cmd->upmove && !(current_user_cmd->buttons & IN_JUMP) && !button_block)
+        else if ((ground_ticks > 1 || charge_in_jump) && (charge_no_input || velocity.IsZero()) && !HasCondition<TFCond_Charging>(LOCAL_E) && !current_user_cmd->forwardmove && !current_user_cmd->sidemove && !current_user_cmd->upmove && !(current_user_cmd->buttons & IN_JUMP) && !button_block)
         {
             if (!move_last_tick)
                 should_charge = true;
             move_last_tick = false;
-
-            return;
         }
         else if (charge_passively && (charge_in_jump || ground_ticks > 1))
         {
