@@ -135,7 +135,11 @@ Vector handleDropdown(Vector current_pos, Vector next_pos)
         VectorAngles(new_to_target, new_angles);
         // If the angles changed, we must have overshot
         if (angles != new_angles)
-            current_pos = next_pos;
+        {
+            float old_z   = current_pos.z;
+            current_pos   = next_pos;
+            current_pos.z = old_z;
+        }
     }
     return current_pos;
 }
@@ -724,7 +728,7 @@ static CatCommand nav_debug_("nav_debug_check", "Perform nav checks between two 
     }
     else
     {
-        logging::Info("Nav: Area is NOT player passable! %.2f,%.2f,%.2f %.2f,%.2f,%.2f", points.current.x, points.current.y, points.current.z, points.next.x, points.next.y, points.next.z);
+        logging::Info("Nav: Area is NOT player passable! %.2f,%.2f,%.2f %.2f,%.2f,%.2f %.2f,%.2f,%.2f", points.current.x, points.current.y, points.current.z, points.center.x, points.center.y, points.center.z, points.next.x, points.next.y, points.next.z);
     }
 });
 
