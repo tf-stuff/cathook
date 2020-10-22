@@ -495,7 +495,8 @@ static void FollowCrumbs()
     {
         Vector vel;
         velocity::EstimateAbsVelocity(RAW_ENT(LOCAL_E), vel);
-        if (!vel.IsZero(50.0f))
+        // 44.0f -> Revved brass beast
+        if (!vel.IsZero(40.0f))
             inactivity.update();
     }
 
