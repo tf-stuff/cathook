@@ -123,23 +123,8 @@ Vector handleDropdown(Vector current_pos, Vector next_pos)
         to_target.NormalizeInPlace();
         Vector angles;
         VectorAngles(to_target, angles);
-        current_pos = GetForwardVector(current_pos, angles, PLAYER_WIDTH);
-
-        // Ensure current_pos does not get placed infront of next_pos
-        Vector new_angles;
-
-        Vector new_to_target = (next_pos - current_pos);
-        new_to_target.z      = 0;
-        new_to_target.NormalizeInPlace();
-
-        VectorAngles(new_to_target, new_angles);
-        // If the angles changed, we must have overshot
-        if (angles != new_angles)
-        {
-            float old_z   = current_pos.z;
-            current_pos   = next_pos;
-            current_pos.z = old_z;
-        }
+        // We need to really make sure we fall, so we go two times as far out as we should have to
+        current_pos = GetForwardVector(current_pos, angles, PLAYER_WIDTH * 2.0f);
     }
     return current_pos;
 }
@@ -149,8 +134,10 @@ class navPoints
 public:
     Vector current;
     Vector center;
+    // The above but on the "next" vector, used for height checks.
+    Vector center_next;
     Vector next;
-    navPoints(Vector A, Vector B, Vector C) : current(A), center(B), next(C){};
+    navPoints(Vector A, Vector B, Vector C, Vector D) : current(A), center(B), center_next(C), next(D){};
 };
 
 // This function ensures that vischeck and pathing use the same logic.
@@ -167,11 +154,19 @@ navPoints determinePoints(CNavArea *current, CNavArea *next)
     // Of the areas.
     // This will avoid walking into walls.
     auto center_point = area_closest;
+
     // Determine if alligned, if not, use the other one as the center point
     if (center_point.x != area_center.x && center_point.y != area_center.y && center_point.x != next_center.x && center_point.y != next_center.y)
+    {
         center_point = next_closest;
+        // Use the point closest to next_closest on the "original" mesh for z
+        center_point.z = current->getNearestPoint(next_closest.AsVector2D()).z;
+    }
 
-    return navPoints(area_center, center_point, next_center);
+    // Nearest point to center on "next"m used for height checks
+    auto center_next = next->getNearestPoint(center_point.AsVector2D());
+
+    return navPoints(area_center, center_point, center_next, next_center);
 };
 
 class Map : public micropather::Graph
@@ -199,7 +194,7 @@ public:
         CNavArea &area = *reinterpret_cast<CNavArea *>(main);
         for (NavConnect &connection : area.m_connections)
         {
-            // An area being entered twice means it is blacklisted from entry
+            // An area being entered twice means it is blacklisted from entry entirely
             auto connection_key    = std::pair<CNavArea *, CNavArea *>(connection.area, connection.area);
             auto cached_connection = vischeck_cache.find(connection_key);
 
@@ -210,16 +205,14 @@ public:
 
             auto points = determinePoints(&area, connection.area);
 
-            float height_diff = points.current.z - points.center.z;
-            bool allowed      = height_diff <= -PLAYER_JUMP_HEIGHT;
+            float height_diff = points.center_next.z - points.center.z;
 
             // Too high for us to jump!
             if (height_diff > PLAYER_JUMP_HEIGHT)
                 continue;
 
             // Apply dropdown
-            points.current = handleDropdown(points.current, points.center);
-            points.center  = handleDropdown(points.center, points.next);
+            points.center = handleDropdown(points.center, points.next);
 
             points.current.z += PLAYER_JUMP_HEIGHT;
             points.center.z += PLAYER_JUMP_HEIGHT;
@@ -229,7 +222,7 @@ public:
             auto cached = vischeck_cache.find(key);
             if (cached != vischeck_cache.end())
             {
-                if (cached->second.vischeck_state || allowed)
+                if (cached->second.vischeck_state)
                 {
                     float cost = connection.area->m_center.DistTo(area.m_center);
                     adjacent->push_back(micropather::StateCost{ reinterpret_cast<void *>(connection.area), cost });
@@ -237,21 +230,17 @@ public:
             }
             else
             {
-                // 1. Check if this is a dropdown. It's in our best interest to trust the navmesh about dropdowns (bool allowed statement above)
-                // 2. If not a dropdown, check if there is direct line of sight
+                // Check if there is direct line of sight
                 if (IsPlayerPassableNavigation(points.current, points.center) && IsPlayerPassableNavigation(points.center, points.next))
                 {
                     vischeck_cache[key] = { VISCHECK_TIME(10), true };
-                    allowed             = true;
+
+                    float cost = points.next.DistTo(points.current);
+                    adjacent->push_back(micropather::StateCost{ reinterpret_cast<void *>(connection.area), cost });
                 }
                 else
                 {
                     vischeck_cache[key] = { VISCHECK_TIME(10), false };
-                }
-                if (allowed)
-                {
-                    float cost = points.next.DistTo(points.current);
-                    adjacent->push_back(micropather::StateCost{ reinterpret_cast<void *>(connection.area), cost });
                 }
             }
         }
@@ -428,8 +417,7 @@ bool navTo(const Vector &destination, int priority, bool should_repath, bool nav
 
             auto points = determinePoints(area, next_area);
 
-            points.current = handleDropdown(points.current, points.center);
-            points.center  = handleDropdown(points.center, points.next);
+            points.center = handleDropdown(points.center, points.next);
 
             crumbs.push_back({ area, std::move(points.current) });
             crumbs.push_back({ area, std::move(points.center) });
@@ -507,7 +495,7 @@ static void FollowCrumbs()
     {
         Vector vel;
         velocity::EstimateAbsVelocity(RAW_ENT(LOCAL_E), vel);
-        if (!vel.IsZero(100.0f))
+        if (!vel.IsZero(50.0f))
             inactivity.update();
     }
 
@@ -710,17 +698,22 @@ static CatCommand nav_init("nav_init", "Reload nav mesh", []() {
 static CatCommand nav_debug_("nav_debug_check", "Perform nav checks between two areas. First area: cat_nav_set Second area: Your location while running this command.", []() {
     if (!NavEngine::isReady())
         return;
-    auto current = NavEngine::map->findClosestNavSquare(g_pLocalPlayer->v_Origin);
-    auto next    = NavEngine::map->findClosestNavSquare(loc);
+    auto next    = NavEngine::map->findClosestNavSquare(g_pLocalPlayer->v_Origin);
+    auto current = NavEngine::map->findClosestNavSquare(loc);
 
     auto points = determinePoints(current, next);
 
-    points.current = handleDropdown(points.current, points.center);
-    points.center  = handleDropdown(points.center, points.next);
+    points.center = handleDropdown(points.center, points.next);
 
     points.current.z += PLAYER_JUMP_HEIGHT;
-    points.center += PLAYER_JUMP_HEIGHT;
+    points.center.z += PLAYER_JUMP_HEIGHT;
     points.next.z += PLAYER_JUMP_HEIGHT;
+
+    // Too high for us to jump!
+    if (points.center_next.z - points.center.z > PLAYER_JUMP_HEIGHT)
+    {
+        return logging::Info("Nav: Area too high!");
+    }
 
     if (IsPlayerPassableNavigation(points.current, points.center) && IsPlayerPassableNavigation(points.center, points.next))
     {
