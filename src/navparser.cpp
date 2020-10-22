@@ -39,6 +39,10 @@ static settings::Boolean draw("nav.draw", "false");
 static settings::Boolean draw_debug_areas("nav.draw.debug-areas", "false");
 static settings::Boolean log_pathing{ "nav.log", "false" };
 static settings::Int stuck_time{ "nav.stuck-time", "1000" };
+static settings::Boolean vischeck_runtime{ "nav.vischeck-runtime.enabled", "true" };
+static settings::Int vischeck_time{ "nav.vischeck-runtime.delay", "2000" };
+
+#define VISCHECK_TIME(seconds) (g_GlobalVars->tickcount + int(seconds / g_GlobalVars->interval_per_tick))
 
 // Cast a Ray and return if it hit
 static bool CastRay(Vector origin, Vector endpos, unsigned mask, ITraceFilter *filter)
@@ -191,6 +195,15 @@ public:
         CNavArea &area = *reinterpret_cast<CNavArea *>(main);
         for (NavConnect &connection : area.m_connections)
         {
+            // An area being entered twice means it is blacklisted from entry
+            auto connection_key    = std::pair<CNavArea *, CNavArea *>(connection.area, connection.area);
+            auto cached_connection = vischeck_cache.find(connection_key);
+
+            // Entered and marked bad?
+            if (cached_connection != vischeck_cache.end())
+                if (!cached_connection->second.vischeck_state)
+                    continue;
+
             auto points = determinePoints(&area, connection.area);
 
             float height_diff = points.current.z - points.center.z;
@@ -224,12 +237,12 @@ public:
                 // 2. If not a dropdown, check if there is direct line of sight
                 if (IsPlayerPassableNavigation(points.current, points.center) && IsPlayerPassableNavigation(points.center, points.next))
                 {
-                    vischeck_cache[key] = { g_GlobalVars->tickcount + int(10 / g_GlobalVars->interval_per_tick), true };
+                    vischeck_cache[key] = { VISCHECK_TIME(10), true };
                     allowed             = true;
                 }
                 else
                 {
-                    vischeck_cache[key] = { g_GlobalVars->tickcount + int(10 / g_GlobalVars->interval_per_tick), false };
+                    vischeck_cache[key] = { VISCHECK_TIME(10), false };
                 }
                 if (allowed)
                 {
@@ -364,6 +377,10 @@ namespace NavEngine
 {
 std::unique_ptr<Map> map;
 std::vector<Crumb> crumbs;
+int current_priority    = 0;
+bool current_navtolocal = false;
+bool repath_on_fail     = false;
+Vector last_destination;
 
 bool isReady()
 {
@@ -375,6 +392,9 @@ static Timer inactivity{};
 bool navTo(const Vector &destination, int priority, bool should_repath, bool nav_to_local, bool is_repath)
 {
     if (!isReady())
+        return false;
+    // Don't path, priority is too low
+    if (priority < current_priority)
         return false;
     crumbs.clear();
 
@@ -416,7 +436,26 @@ bool navTo(const Vector &destination, int priority, bool should_repath, bool nav
     crumbs.push_back({ nullptr, destination });
     inactivity.update();
 
+    current_priority   = priority;
+    current_navtolocal = nav_to_local;
+    repath_on_fail     = should_repath;
+    // Ensure we know where to go
+    if (repath_on_fail)
+        last_destination = destination;
+
     return true;
+}
+
+// Use when something unexpected happens, e.g. vischeck fails
+void abandonPath()
+{
+    if (!map)
+        return;
+    map->pather.Reset();
+    crumbs.clear();
+    // We want to repath on failure
+    if (repath_on_fail)
+        navTo(last_destination, current_priority, true, current_navtolocal, false);
 }
 
 // Code to detect "complicated" dropdowns
@@ -438,14 +477,18 @@ static Timer last_jump{};
 // Used to determine if we want to jump or if we want to crouch
 static bool crouch          = false;
 static int ticks_since_jump = 0;
-static float last_dist;
 
 static void FollowCrumbs()
 {
     size_t crumbs_amount = crumbs.size();
 
+    // No more crumbs, reset status
     if (!crumbs_amount)
+    {
+        repath_on_fail   = false;
+        current_priority = 0;
         return;
+    }
 
     // We are close enough to the crumb to have reached it
     if (crumbs[0].vec.DistTo(g_pLocalPlayer->v_Origin) < 50)
@@ -507,12 +550,48 @@ static void FollowCrumbs()
     WalkTo(crumbs[0].vec);
 }
 
+static Timer vischeck_timer{};
+void VischeckPath()
+{
+    // No crumbs to check, or vischeck timer should not run yet, bail.
+    if (crumbs.size() < 2 || !vischeck_timer.test_and_set(*vischeck_time))
+        return;
+
+    // Iterate all the crumbs
+    for (int i = 0; i < (int) crumbs.size() - 1; i++)
+    {
+        auto current_crumb  = crumbs[i];
+        auto next_crumb     = crumbs[i + 1];
+        auto current_center = current_crumb.vec;
+        auto next_center    = next_crumb.vec;
+
+        current_center.z += PLAYER_JUMP_HEIGHT;
+        next_center.z += PLAYER_JUMP_HEIGHT;
+        auto key = std::pair<CNavArea *, CNavArea *>(current_crumb.navarea, next_crumb.navarea);
+        // Check if we can pass, if not, abort pathing and mark as bad
+        if (!IsPlayerPassableNavigation(current_center, next_center))
+        {
+            // Mark as invalid for 10 seconds
+            map->vischeck_cache[key] = { VISCHECK_TIME(10), false };
+            abandonPath();
+        }
+        // Else we can update the cache (if not marked bad before this)
+        else if (map->vischeck_cache.find(key) == map->vischeck_cache.end() || map->vischeck_cache[key].vischeck_state)
+        {
+            map->vischeck_cache[key] = { VISCHECK_TIME(10), true };
+        }
+    }
+}
+
 void CreateMove()
 {
     if (!isReady())
         return;
     if (CE_BAD(LOCAL_E) || !LOCAL_E->m_bAlivePlayer())
         return;
+
+    if (vischeck_runtime)
+        VischeckPath();
 
     FollowCrumbs();
 }
@@ -615,7 +694,9 @@ Vector loc;
 
 static CatCommand nav_set("nav_set", "Debug nav find", []() { loc = g_pLocalPlayer->v_Origin; });
 
-static CatCommand nav_path("nav_path", "Debug nav path", []() { NavEngine::navTo(loc, 5, false, true, false); });
+static CatCommand nav_path("nav_path", "Debug nav path", []() { NavEngine::navTo(loc, 5, true, true, false); });
+
+static CatCommand nav_path_noreapth("nav_path_norepath", "Debug nav path", []() { NavEngine::navTo(loc, 5, false, true, false); });
 
 static CatCommand nav_init("nav_init", "Reload nav mesh", []() {
     NavEngine::map.reset();
