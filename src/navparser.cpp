@@ -490,6 +490,16 @@ static void FollowCrumbs()
             return;
         inactivity.update();
     }
+    // We are close enough to the second crumb, Skip both (This is espcially helpful with drop downs)
+    if (crumbs.size() > 1 && crumbs[1].vec.DistTo(g_pLocalPlayer->v_Origin) < 50)
+    {
+        crumbs.erase(crumbs.begin(), std::next(crumbs.begin()));
+        --crumbs_amount;
+        if (!--crumbs_amount)
+            return;
+        inactivity.update();
+    }
+
     // If we make any progress at all, reset this
     else
     {
