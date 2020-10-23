@@ -20,6 +20,9 @@
 #include "common.hpp"
 #include "micropather.h"
 #include "CNavFile.h"
+#include "teamroundtimer.hpp"
+#include "Aimbot.hpp"
+#include "MiscAimbot.hpp"
 #if ENABLE_VISUALS
 #include "drawing.hpp"
 #endif
@@ -36,18 +39,20 @@ constexpr float PLAYER_JUMP_HEIGHT = 72.0f;
 
 static settings::Boolean enabled("nav.enabled", "false");
 static settings::Boolean draw("nav.draw", "false");
+static settings::Boolean look{ "nav.look-at-path", "false" };
 static settings::Boolean draw_debug_areas("nav.draw.debug-areas", "false");
 static settings::Boolean log_pathing{ "nav.log", "false" };
 static settings::Int stuck_time{ "nav.stuck-time", "1000" };
+static settings::Int vischeck_cache_time{ "nav.vischeck-cache.time", "120" };
 static settings::Boolean vischeck_runtime{ "nav.vischeck-runtime.enabled", "true" };
 static settings::Int vischeck_time{ "nav.vischeck-runtime.delay", "2000" };
 static settings::Int stuck_detect_time{ "nav.anti-stuck.detection-time", "5" };
 // How long until accumulated "Stuck time" expires
 static settings::Int stuck_expire_time{ "nav.anti-stuck.expire-time", "10" };
 // How long we should blacklist the node after being stuck for too long?
-static settings::Int stuck_blacklist_time{ "nav.anti-stuck.blacklist-time", "30" };
+static settings::Int stuck_blacklist_time{ "nav.anti-stuck.blacklist-time", "120" };
 
-#define TICKCOUNT_TIMESTAMP(seconds) (g_GlobalVars->tickcount + int(seconds / g_GlobalVars->interval_per_tick))
+#define TICKCOUNT_TIMESTAMP(seconds) (g_GlobalVars->tickcount + int((float) seconds / g_GlobalVars->interval_per_tick))
 
 // Cast a Ray and return if it hit
 static bool CastRay(Vector origin, Vector endpos, unsigned mask, ITraceFilter *filter)
@@ -245,14 +250,14 @@ public:
                 // Check if there is direct line of sight
                 if (IsPlayerPassableNavigation(points.current, points.center) && IsPlayerPassableNavigation(points.center, points.next))
                 {
-                    vischeck_cache[key] = { TICKCOUNT_TIMESTAMP(10), true };
+                    vischeck_cache[key] = { TICKCOUNT_TIMESTAMP(60), true };
 
                     float cost = points.next.DistTo(points.current);
                     adjacent->push_back(micropather::StateCost{ reinterpret_cast<void *>(connection.area), cost });
                 }
                 else
                 {
-                    vischeck_cache[key] = { TICKCOUNT_TIMESTAMP(10), false };
+                    vischeck_cache[key] = { TICKCOUNT_TIMESTAMP(60), false };
                 }
             }
         }
@@ -268,6 +273,15 @@ public:
         CNavArea *ovBestSquare = nullptr, *bestSquare = nullptr;
         for (auto &i : navfile.m_areas)
         {
+            // Marked bad, do not use if local origin
+            if (g_pLocalPlayer->v_Origin == vec)
+            {
+                auto key = std::pair<CNavArea *, CNavArea *>(&i, &i);
+                if (vischeck_cache.find(key) != vischeck_cache.end())
+                    if (!vischeck_cache[key].vischeck_state)
+                        continue;
+            }
+
             float dist = i.m_center.DistTo(vec);
             if (dist < bestDist)
             {
@@ -405,7 +419,18 @@ bool isReady()
     return enabled && map && map->state == NavState::Active;
 }
 
+bool isPathing()
+{
+    return !crumbs.empty();
+}
+
+CNavFile *getNavFile()
+{
+    return &map->navfile;
+}
+
 static Timer inactivity{};
+static Timer time_spent_on_crumb{};
 
 bool navTo(const Vector &destination, int priority, bool should_repath, bool nav_to_local, bool is_repath)
 {
@@ -415,6 +440,7 @@ bool navTo(const Vector &destination, int priority, bool should_repath, bool nav
     if (priority < current_priority)
         return false;
     crumbs.clear();
+    time_spent_on_crumb.update();
 
     CNavArea *start_area = map->findClosestNavSquare(g_pLocalPlayer->v_Origin);
     CNavArea *dest_area  = map->findClosestNavSquare(destination);
@@ -476,6 +502,13 @@ void abandonPath()
         navTo(last_destination, current_priority, true, current_navtolocal, false);
 }
 
+// Use to cancel pathing completely
+void cancelPath()
+{
+    crumbs.clear();
+    last_crumb.navarea = nullptr;
+}
+
 static Timer last_jump{};
 // Used to determine if we want to jump or if we want to crouch
 static bool crouch          = false;
@@ -501,6 +534,7 @@ static void followCrumbs()
     {
         last_crumb = crumbs[0];
         crumbs.erase(crumbs.begin());
+        time_spent_on_crumb.update();
         if (!--crumbs_amount)
             return;
         inactivity.update();
@@ -519,11 +553,15 @@ static void followCrumbs()
     // If we make any progress at all, reset this
     else
     {
-        Vector vel;
-        velocity::EstimateAbsVelocity(RAW_ENT(LOCAL_E), vel);
-        // 44.0f -> Revved brass beast, do not use z axis as jumping counts towards that. Yes this will mean long falls will trigger it, but that is not really bad.
-        if (!vel.AsVector2D().IsZero(40.0f))
-            inactivity.update();
+        // If we spend way too long on this crumb, ignore the logic below
+        if (!time_spent_on_crumb.check(*stuck_detect_time * 1000))
+        {
+            Vector vel;
+            velocity::EstimateAbsVelocity(RAW_ENT(LOCAL_E), vel);
+            // 44.0f -> Revved brass beast, do not use z axis as jumping counts towards that. Yes this will mean long falls will trigger it, but that is not really bad.
+            if (!vel.AsVector2D().IsZero(40.0f))
+                inactivity.update();
+        }
     }
 
     // Detect when jumping is necessary.
@@ -566,6 +604,17 @@ static void followCrumbs()
         return;
     }*/
 
+    // Look at path
+    if (look && !hacks::shared::aimbot::CurrentTarget())
+    {
+        Vector next{ crumbs[0].vec.x, crumbs[0].vec.y, g_pLocalPlayer->v_Eye.z };
+        next = GetAimAtAngles(g_pLocalPlayer->v_Eye, next);
+
+        // Slow aim to smoothen
+        hacks::tf2::misc_aimbot::DoSlowAim(next);
+        current_user_cmd->viewangles = next;
+    }
+
     WalkTo(crumbs[0].vec);
 }
 
@@ -590,14 +639,14 @@ void vischeckPath()
         // Check if we can pass, if not, abort pathing and mark as bad
         if (!IsPlayerPassableNavigation(current_center, next_center))
         {
-            // Mark as invalid for 10 seconds
-            map->vischeck_cache[key] = { TICKCOUNT_TIMESTAMP(10), false };
+            // Mark as invalid for 60 seconds
+            map->vischeck_cache[key] = { TICKCOUNT_TIMESTAMP(*vischeck_cache_time), false };
             abandonPath();
         }
         // Else we can update the cache (if not marked bad before this)
         else if (map->vischeck_cache.find(key) == map->vischeck_cache.end() || map->vischeck_cache[key].vischeck_state)
         {
-            map->vischeck_cache[key] = { TICKCOUNT_TIMESTAMP(10), true };
+            map->vischeck_cache[key] = { TICKCOUNT_TIMESTAMP(*vischeck_cache_time), true };
         }
     }
 }
@@ -639,7 +688,18 @@ void CreateMove()
     if (!isReady())
         return;
     if (CE_BAD(LOCAL_E) || !LOCAL_E->m_bAlivePlayer())
+    {
+        cancelPath();
         return;
+    }
+    round_states round_state = g_pTeamRoundTimer->GetRoundState();
+    // Still in setuptime, if on fitting team, then do not path yet
+    if (round_state == RT_STATE_SETUP && g_pLocalPlayer->team == TEAM_BLU)
+    {
+        if (navparser::NavEngine::isPathing())
+            navparser::NavEngine::cancelPath();
+        return;
+    }
 
     if (vischeck_runtime)
         vischeckPath();
@@ -800,8 +860,6 @@ static CatCommand nav_debug_blacklist("nav_debug_blacklist", "Blacklist connecti
 });
 
 static InitRoutine init([]() {
-    // this is a comment
-    // so this doesn't get one linered
     EC::Register(EC::CreateMove, NavEngine::CreateMove, "navengine_cm");
     EC::Register(EC::LevelInit, NavEngine::LevelInit, "navengine_levelinit");
 #if ENABLE_VISUALS
