@@ -17,6 +17,9 @@ static settings::Boolean search_ammo("navbot.search-ammo", "true");
 static settings::Boolean stay_near("navbot.stay-near", "true");
 static settings::Boolean snipe_sentries("navbot.snipe-sentries", "true");
 static settings::Boolean snipe_sentries_shortrange("navbot.snipe-sentries.shortrange", "true");
+static settings::Boolean autojump("navbot.autojump.enabled", "false");
+static settings::Boolean primary_only("navbot.primary-only", "true");
+static settings::Float jump_distance("navbot.autojump.trigger-distance", "300");
 static settings::Int blacklist_delay("navbot.proximity-blacklist.delay", "500");
 static settings::Int blacklist_delay_dormat("navbot.proximity-blacklist.delay-dormant", "1000");
 
@@ -27,8 +30,7 @@ enum Priority_list
     staynear,
     snipe_sentry,
     ammo,
-    health,
-    danger
+    health
 };
 
 // For stay near, min and max distance we should be from the enemy.
@@ -248,13 +250,6 @@ void updateEnemyBlacklist()
     }
 }
 
-void LevelInit()
-{
-    // Make it run asap
-    refresh_sniperspots_timer.last -= std::chrono::seconds(60);
-    sniper_spots.clear();
-}
-
 // Roam around map
 bool doRoam()
 {
@@ -338,12 +333,24 @@ bool stayNearTarget(CachedEntity *ent)
     return false;
 }
 
+// A bunch of basic checks to ensure we don't try to target an invalid entity
+bool isStayNearTargetValid(CachedEntity *ent)
+{
+    return CE_VALID(ent) && g_pPlayerResource->isAlive(ent->m_IDX) && ent->m_IDX != g_pLocalPlayer->entity_idx && g_pLocalPlayer->team != ent->m_iTeam() && player_tools::shouldTarget(ent) && !IsPlayerInvisible(ent) && !IsPlayerInvulnerable(ent);
+}
+
 // Try to stay near enemies and stalk them (or in case of sniper, try to stay far from them
 // and snipe them)
 bool stayNear()
 {
+    PROF_SECTION(stayNear)
     static Timer staynear_cooldown{};
     static CachedEntity *previous_target = nullptr;
+
+    // Stay near us expensive so we have to cache. We achieve this by only checking a pre-determined amount of players every CreateMove
+    constexpr int MAX_STAYNEAR_CHECKS_RANGE = 3;
+    constexpr int MAX_STAYNEAR_CHECKS_CLOSE = 2;
+    static int lowest_check_index           = 0;
 
     // Stay near is off
     if (!stay_near)
@@ -353,43 +360,55 @@ bool stayNear()
     if (!staynear_cooldown.test_and_set(selected_config.prefer_far ? 2000 : 500))
         return navparser::NavEngine::current_priority == staynear;
     // Check and use our previous target if available
-    if (CE_VALID(previous_target))
+    if (isStayNearTargetValid(previous_target))
     {
-        if (g_pPlayerResource->isAlive(previous_target->m_IDX) && previous_target->m_IDX != g_pLocalPlayer->entity_idx && g_pLocalPlayer->team != previous_target->m_iTeam() && player_tools::shouldTarget(previous_target))
+        auto ent_origin = previous_target->m_vecDormantOrigin();
+        if (ent_origin)
         {
-            auto ent_origin = previous_target->m_vecDormantOrigin();
-            if (ent_origin)
+            // Check if current target area is valid
+            if (navparser::NavEngine::isPathing())
             {
-                // Check if current target area is valid
-                if (navparser::NavEngine::isPathing())
+                auto crumbs = navparser::NavEngine::getCrumbs();
+                // We cannot just use the last crumb, as it is always nullptr
+                if (crumbs->size() > 1)
                 {
-                    auto crumbs = navparser::NavEngine::getCrumbs();
-                    // We cannot just use the last crumb, as it is always nullptr
-                    if (crumbs->size() > 1)
-                    {
-                        auto last_crumb = (*crumbs)[crumbs->size() - 2];
-                        // Area is still valid, stay on it
-                        if (isAreaValidForStayNear(*ent_origin, last_crumb.navarea->m_center))
-                            return true;
-                    }
+                    auto last_crumb = (*crumbs)[crumbs->size() - 2];
+                    // Area is still valid, stay on it
+                    if (isAreaValidForStayNear(*ent_origin, last_crumb.navarea->m_center))
+                        return true;
                 }
-                // Else Check our origin for validity (Only for ranged classes)
-                else if (selected_config.prefer_far && isAreaValidForStayNear(*ent_origin, LOCAL_E->m_vecOrigin()))
-                    return true;
             }
-            // Else we try to path again
-            if (stayNearTarget(previous_target))
+            // Else Check our origin for validity (Only for ranged classes)
+            else if (selected_config.prefer_far && isAreaValidForStayNear(*ent_origin, LOCAL_E->m_vecOrigin()))
                 return true;
-            // Failed, invalidate previous target and try others
-            previous_target = nullptr;
         }
+        // Else we try to path again
+        if (stayNearTarget(previous_target))
+            return true;
+        // Failed, invalidate previous target and try others
+        previous_target = nullptr;
     }
+
+    auto advance_count = selected_config.prefer_far ? MAX_STAYNEAR_CHECKS_RANGE : MAX_STAYNEAR_CHECKS_CLOSE;
+
+    // Ensure it is in bounds and also wrap around
+    if (lowest_check_index > g_IEngine->GetMaxClients())
+        lowest_check_index = 0;
+
+    int calls = 0;
     // Test all entities
-    for (int i = 1; i <= g_IEngine->GetMaxClients(); i++)
+    for (int i = lowest_check_index; i <= g_IEngine->GetMaxClients(); i++)
     {
+        if (calls >= advance_count)
+            break;
+        calls++;
+        lowest_check_index++;
         CachedEntity *ent = ENTITY(i);
-        if (CE_INVALID(ent) || i == g_pLocalPlayer->entity_idx || !g_pPlayerResource->isAlive(i) || g_pLocalPlayer->team == ent->m_iTeam() || !player_tools::shouldTarget(ent))
+        if (!isStayNearTargetValid(ent))
+        {
+            calls--;
             continue;
+        }
         // Succeeded pathing
         if (stayNearTarget(ent))
         {
@@ -502,6 +521,116 @@ bool snipeSentries()
     return false;
 }
 
+static std::pair<CachedEntity *, float> getNearestPlayerDistance()
+{
+    float distance         = FLT_MAX;
+    CachedEntity *best_ent = nullptr;
+    for (int i = 1; i <= g_IEngine->GetMaxClients(); i++)
+    {
+        CachedEntity *ent = ENTITY(i);
+        if (CE_VALID(ent) && ent->m_vecDormantOrigin() && ent->m_bAlivePlayer() && ent->m_bEnemy() && g_pLocalPlayer->v_Origin.DistTo(ent->m_vecOrigin()) < distance && player_tools::shouldTarget(ent) && !IsPlayerInvisible(ent))
+        {
+            distance = g_pLocalPlayer->v_Origin.DistTo(*ent->m_vecDormantOrigin());
+            best_ent = ent;
+        }
+    }
+    return { best_ent, distance };
+}
+
+static void autoJump()
+{
+    static Timer last_jump{};
+    if (!last_jump.test_and_set(200))
+        return;
+
+    if (getNearestPlayerDistance().second <= *jump_distance)
+        current_user_cmd->buttons |= IN_JUMP | IN_DUCK;
+}
+
+enum slots
+{
+    primary   = 1,
+    secondary = 2,
+    melee     = 3
+};
+static slots getBestSlot(slots active_slot)
+{
+    auto nearest = getNearestPlayerDistance();
+    switch (g_pLocalPlayer->clazz)
+    {
+    case tf_scout:
+        return primary;
+    case tf_heavy:
+        return primary;
+    case tf_medic:
+        return secondary;
+    case tf_spy:
+    {
+        if (nearest.second > 200 && active_slot == primary)
+            return active_slot;
+        else if (nearest.second >= 250)
+            return primary;
+        else
+            return melee;
+    }
+    case tf_sniper:
+    {
+        if (nearest.second <= 300 && nearest.first->m_iHealth() < 75)
+            return secondary;
+        else if (nearest.second <= 400 && nearest.first->m_iHealth() < 75)
+            return active_slot;
+        else
+            return primary;
+    }
+    case tf_pyro:
+    {
+        if (nearest.second > 450 && active_slot == secondary)
+            return active_slot;
+        else if (nearest.second <= 550)
+            return primary;
+        else
+            return secondary;
+    }
+    case tf_soldier:
+    {
+        if (nearest.second <= 200)
+            return secondary;
+        else if (nearest.second <= 300)
+            return active_slot;
+        else
+            return primary;
+    }
+    default:
+    {
+        if (nearest.second <= 400)
+            return secondary;
+        else if (nearest.second <= 500)
+            return active_slot;
+        else
+            return primary;
+    }
+    }
+}
+
+static void updateSlot()
+{
+    static Timer slot_timer{};
+    if (!slot_timer.test_and_set(300))
+        return;
+    if (CE_GOOD(LOCAL_E) && CE_GOOD(LOCAL_W) && LOCAL_E->m_bAlivePlayer())
+    {
+        IClientEntity *weapon = RAW_ENT(LOCAL_W);
+        // IsBaseCombatWeapon()
+        if (re::C_BaseCombatWeapon::IsBaseCombatWeapon(weapon))
+        {
+            int slot    = re::C_BaseCombatWeapon::GetSlot(weapon) + 1;
+            int newslot = getBestSlot(static_cast<slots>(slot));
+            if (slot != newslot)
+                g_IEngine->ClientCmd_Unrestricted(format("slot", newslot).c_str());
+        }
+    }
+}
+
 void CreateMove()
 {
     if (!enabled || !navparser::NavEngine::isReady())
@@ -525,6 +654,8 @@ void CreateMove()
         selected_config = CONFIG_MID_RANGE;
     }
 
+    updateSlot();
+    autoJump();
     updateEnemyBlacklist();
 
     // First priority should be getting health
@@ -545,6 +676,12 @@ void CreateMove()
     // We have nothing else to do, roam
     else if (doRoam())
         return;
+}
+void LevelInit()
+{
+    // Make it run asap
+    refresh_sniperspots_timer.last -= std::chrono::seconds(60);
+    sniper_spots.clear();
 }
 
 static InitRoutine init([]() { EC::Register(EC::CreateMove, CreateMove, "navbot_cm"); });

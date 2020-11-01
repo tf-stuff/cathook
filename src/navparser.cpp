@@ -746,6 +746,14 @@ void checkBlacklist()
     if (!blacklist_check_timer.test_and_set(500))
         return;
 
+    // Local player is ubered and does not care about the blacklist
+    // TODO: Only for damage type things
+    if (IsPlayerInvulnerable(LOCAL_E))
+    {
+        map->free_blacklist_blocked = true;
+        map->pather.Reset();
+        return;
+    }
     CNavArea *local_area = map->findClosestNavSquare(g_pLocalPlayer->v_Origin);
     for (auto &entry : map->free_blacklist)
     {
@@ -753,6 +761,7 @@ void checkBlacklist()
         if (entry.first == local_area)
         {
             map->free_blacklist_blocked = true;
+            map->pather.Reset();
             return;
         }
     }

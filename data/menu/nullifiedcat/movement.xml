@@ -39,10 +39,10 @@
             <AutoVariable width="fill" target="navbot.search-health" label="Search health"/>
             <AutoVariable width="fill" target="navbot.search-ammo" label="Search ammo"/>
             <!--AutoVariable width="fill" target="navbot.spy-mode" label="Enable Spy mode"/>
-            <AutoVariable width="fill" target="navbot.other-mode" label="General mode"/>
+            <AutoVariable width="fill" target="navbot.other-mode" label="General mode"/-->
             <AutoVariable width="fill" target="navbot.primary-only" label="Best weapon only"/>
             <AutoVariable width="fill" target="navbot.autojump.enabled" label="Enable autojump"/>
-            <AutoVariable width="fill" target="navbot.autojump.trigger-distance" label="Jump distance"/-->
+            <AutoVariable width="fill" target="navbot.autojump.trigger-distance" label="Jump distance"/>
             <AutoVariable width="fill" target="navbot.snipe-sentries" label="Try to target sentries"/>
             <AutoVariable width="fill" target="navbot.snipe-sentries.shortrange" label="Scout/Pyro sentry mode" tooltip="Try to target sentries as scout/pyro aswell. Usually not recommended."/>
             <AutoVariable width="fill" target="navbot.stay-near" label="Stalk enemies" tooltip="Try to outrange as sniper and close distance as scout/heavy"/>
