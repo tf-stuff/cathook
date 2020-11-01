@@ -23,6 +23,7 @@
 #include "teamroundtimer.hpp"
 #include "Aimbot.hpp"
 #include "MiscAimbot.hpp"
+#include "navparser.hpp"
 #if ENABLE_VISUALS
 #include "drawing.hpp"
 #endif
@@ -32,18 +33,13 @@
 
 namespace navparser
 {
-
-constexpr float PLAYER_WIDTH       = 49;
-constexpr float HALF_PLAYER_WIDTH  = PLAYER_WIDTH / 2.0f;
-constexpr float PLAYER_JUMP_HEIGHT = 72.0f;
-
 static settings::Boolean enabled("nav.enabled", "false");
 static settings::Boolean draw("nav.draw", "false");
 static settings::Boolean look{ "nav.look-at-path", "false" };
 static settings::Boolean draw_debug_areas("nav.draw.debug-areas", "false");
 static settings::Boolean log_pathing{ "nav.log", "false" };
 static settings::Int stuck_time{ "nav.stuck-time", "1000" };
-static settings::Int vischeck_cache_time{ "nav.vischeck-cache.time", "120" };
+static settings::Int vischeck_cache_time{ "nav.vischeck-cache.time", "240" };
 static settings::Boolean vischeck_runtime{ "nav.vischeck-runtime.enabled", "true" };
 static settings::Int vischeck_time{ "nav.vischeck-runtime.delay", "2000" };
 static settings::Int stuck_detect_time{ "nav.anti-stuck.detection-time", "5" };
@@ -51,8 +47,9 @@ static settings::Int stuck_detect_time{ "nav.anti-stuck.detection-time", "5" };
 static settings::Int stuck_expire_time{ "nav.anti-stuck.expire-time", "10" };
 // How long we should blacklist the node after being stuck for too long?
 static settings::Int stuck_blacklist_time{ "nav.anti-stuck.blacklist-time", "120" };
+static settings::Int sticky_ignore_time{ "nav.ignore.sticky-time", "15" };
 
-#define TICKCOUNT_TIMESTAMP(seconds) (g_GlobalVars->tickcount + int((float) seconds / g_GlobalVars->interval_per_tick))
+#define TICKCOUNT_TIMESTAMP(seconds) (g_GlobalVars->tickcount + int(seconds / g_GlobalVars->interval_per_tick))
 
 // Cast a Ray and return if it hit
 static bool CastRay(Vector origin, Vector endpos, unsigned mask, ITraceFilter *filter)
@@ -194,6 +191,12 @@ public:
     std::string mapname;
     std::unordered_map<std::pair<CNavArea *, CNavArea *>, CachedConnection, boost::hash<std::pair<CNavArea *, CNavArea *>>> vischeck_cache;
     std::unordered_map<std::pair<CNavArea *, CNavArea *>, CachedStucktime, boost::hash<std::pair<CNavArea *, CNavArea *>>> connection_stuck_time;
+    // This is a pure blacklist that does not get cleared and is for free usage internally and externally, e.g. blacklisting where enemies are standing
+    // This blacklist only gets cleared on map change, and can be used time independantly.
+    // the enum is the Blacklist reason, so you can easily edit it
+    std::unordered_map<CNavArea *, BlacklistReason> free_blacklist;
+    // When the local player stands on one of the nav squares the free blacklist should NOT run
+    bool free_blacklist_blocked = false;
 
     Map(const char *mapname) : navfile(mapname), mapname(mapname)
     {
@@ -219,6 +222,20 @@ public:
             if (cached_connection != vischeck_cache.end())
                 if (!cached_connection->second.vischeck_state)
                     continue;
+
+            // If the extern blacklist is running, ensure we don't try to use a bad area
+            bool is_blacklisted = false;
+            if (!free_blacklist_blocked)
+                for (auto &entry : free_blacklist)
+                {
+                    if (entry.first == connection.area)
+                    {
+                        is_blacklisted = true;
+                        break;
+                    }
+                }
+            if (is_blacklisted)
+                continue;
 
             auto points = determinePoints(&area, connection.area);
 
@@ -333,11 +350,95 @@ public:
 
     void updateIgnores()
     {
-        static Timer despam;
-        if (!despam.test_and_set(1000))
+        static Timer update_time;
+        if (!update_time.test_and_set(1000))
             return;
+
+        // Sentries make sounds, so we can just rely on soundcache here and always clear sentries
+        NavEngine::clearFreeBlacklist(SENTRY);
+        // Find sentries and stickies
+        for (int i = g_IEngine->GetMaxClients() + 1; i < MAX_ENTITIES; i++)
+        {
+            CachedEntity *ent = ENTITY(i);
+            if (CE_INVALID(ent) || !ent->m_bAlivePlayer() || ent->m_iTeam() == g_pLocalPlayer->team)
+                continue;
+            bool is_sentry = ent->m_iClassID() == CL_CLASS(CObjectSentrygun);
+            bool is_sticky = ent->m_iClassID() == CL_CLASS(CTFGrenadePipebombProjectile) && CE_INT(ent, netvar.iPipeType) == 1 && CE_VECTOR(ent, netvar.vVelocity).IsZero(1.0f);
+            // Not sticky/sentry, ignore.
+            // (Or dormant sticky)
+            if (!is_sentry && (!is_sticky || CE_BAD(ent)))
+                continue;
+            if (is_sentry)
+            {
+                // Should we even ignore the sentry?
+                // Soldier/Heavy do not care about Level 1 or mini sentries
+                bool is_strong_class = g_pLocalPlayer->clazz == tf_soldier || g_pLocalPlayer->clazz == tf_heavy;
+                if (is_strong_class && (CE_BYTE(ent, netvar.m_bMiniBuilding) || CE_INT(ent, netvar.iUpgradeLevel) == 1))
+                    continue;
+
+                // It's still building/being sapped, ignore
+                if (CE_BYTE(ent, netvar.m_bBuilding) || CE_BYTE(ent, netvar.m_bPlacing) || CE_BYTE(ent, netvar.m_bHasSapper))
+                    continue;
+                // Get origin of the sentry
+                auto building_origin = GetBuildingPosition(ent);
+                // For dormant sentries we need to add the jump height to the z
+                if (CE_BAD(ent))
+                    building_origin.z += PLAYER_JUMP_HEIGHT;
+                // Actual building check
+                for (auto &i : navfile.m_areas)
+                {
+                    Vector area = i.m_center;
+                    area.z += PLAYER_JUMP_HEIGHT;
+                    // Out of range
+                    if (building_origin.DistToSqr(area) > (1100 + HALF_PLAYER_WIDTH) * (1100 + HALF_PLAYER_WIDTH))
+                        continue;
+                    // Check if sentry can see us
+                    if (!IsVectorVisibleNavigation(building_origin, area))
+                        continue;
+                    // Blacklist because it's in view range of the sentry
+                    free_blacklist[&i] = SENTRY;
+                }
+            }
+            else
+            {
+                auto sticky_origin = ent->m_vecOrigin();
+                // Make sure the sticky doesn't vischeck from inside the floor
+                sticky_origin.z += PLAYER_JUMP_HEIGHT / 2.0f;
+                for (auto &i : navfile.m_areas)
+                {
+                    Vector area = i.m_center;
+                    area.z += PLAYER_JUMP_HEIGHT;
+                    // Out of range
+                    if (sticky_origin.DistToSqr(area) > (130 + HALF_PLAYER_WIDTH) * (130 + HALF_PLAYER_WIDTH))
+                        continue;
+                    // Check if Sticky can see the reason
+                    if (!IsVectorVisibleNavigation(sticky_origin, area))
+                        continue;
+                    // Blacklist because it's in range of the sticky, but stickies make no noise, so blacklist it for a specific timeframe
+                    free_blacklist[&i] = { STICKY, TICKCOUNT_TIMESTAMP(*sticky_ignore_time) };
+                }
+            }
+        }
+
+        static int previous_blacklist_size = 0;
+
         bool erased = false;
-        // When we switch to c++20, we can use std::erase_if TODO: FIXME
+        if (previous_blacklist_size != free_blacklist.size())
+            erased = true;
+        previous_blacklist_size = free_blacklist.size();
+        // When we switch to c++20, we can use std::erase_if
+        for (auto it = begin(free_blacklist); it != end(free_blacklist);)
+        {
+            // Clear entries from the free blacklist when expired and if it has a set time
+            if (it->second.time && it->second.time < g_GlobalVars->tickcount)
+            {
+                it     = free_blacklist.erase(it); // previously this was something like m_map.erase(it++);
+                erased = true;
+            }
+            else
+                ++it;
+        }
+
         for (auto it = begin(vischeck_cache); it != end(vischeck_cache);)
         {
             if (it->second.expire_tick < g_GlobalVars->tickcount)
@@ -362,32 +463,11 @@ public:
             pather.Reset();
     }
 
-    /*bool addIgnoreTime(CNavArea *begin, CNavArea *end, Timer &time)
-    {
-        if (!begin || !end)
-        {
-            return true;
-        }
-        using namespace std::chrono;
-        // Check if connection is already known
-        if (ignores.find({ begin, end }) == ignores.end())
-        {
-            ignores[{ begin, end }] = {};
-        }
-        ignoredata &connection = ignores[{ begin, end }];
-        connection.stucktime += duration_cast<milliseconds>(system_clock::now() - time.last).count();
-        if (connection.stucktime >= *stuck_time)
-        {
-            logging::Info("Ignored Connection %i-%i", begin->m_id, end->m_id);
-            return addTime(connection, explicit_ignored);
-        }
-        return false;
-    }*/
-
     void Reset()
     {
         vischeck_cache.clear();
         connection_stuck_time.clear();
+        free_blacklist.clear();
         pather.Reset();
     }
 
@@ -395,12 +475,6 @@ public:
     void PrintStateInfo(void *) override
     {
     }
-};
-
-struct Crumb
-{
-    CNavArea *navarea;
-    Vector vec;
 };
 
 namespace NavEngine
@@ -416,7 +490,7 @@ Vector last_destination;
 
 bool isReady()
 {
-    return enabled && map && map->state == NavState::Active;
+    return enabled && map && map->state == NavState::Active && (g_pTeamRoundTimer->GetRoundState() != RT_STATE_SETUP || g_pLocalPlayer->team != TEAM_BLU);
 }
 
 bool isPathing()
@@ -427,6 +501,10 @@ bool isPathing()
 CNavFile *getNavFile()
 {
     return &map->navfile;
+}
+std::vector<Crumb> *getCrumbs()
+{
+    return &crumbs;
 }
 
 static Timer inactivity{};
@@ -439,8 +517,6 @@ bool navTo(const Vector &destination, int priority, bool should_repath, bool nav
     // Don't path, priority is too low
     if (priority < current_priority)
         return false;
-    crumbs.clear();
-    time_spent_on_crumb.update();
 
     CNavArea *start_area = map->findClosestNavSquare(g_pLocalPlayer->v_Origin);
     CNavArea *dest_area  = map->findClosestNavSquare(destination);
@@ -457,6 +533,8 @@ bool navTo(const Vector &destination, int priority, bool should_repath, bool nav
         if (path.empty())
             return false;
     }
+    crumbs.clear();
+
     for (size_t i = 0; i < path.size(); i++)
     {
         CNavArea *area = reinterpret_cast<CNavArea *>(path.at(i));
@@ -476,6 +554,7 @@ bool navTo(const Vector &destination, int priority, bool should_repath, bool nav
         else
             crumbs.push_back({ area, area->m_center });
     }
+
     crumbs.push_back({ nullptr, destination });
     inactivity.update();
 
@@ -500,6 +579,8 @@ void abandonPath()
     // We want to repath on failure
     if (repath_on_fail)
         navTo(last_destination, current_priority, true, current_navtolocal, false);
+    else
+        current_priority = 0;
 }
 
 // Use to cancel pathing completely
@@ -507,12 +588,14 @@ void cancelPath()
 {
     crumbs.clear();
     last_crumb.navarea = nullptr;
+    current_priority   = 0;
 }
 
 static Timer last_jump{};
 // Used to determine if we want to jump or if we want to crouch
 static bool crouch          = false;
 static int ticks_since_jump = 0;
+static Crumb current_crumb;
 
 static void followCrumbs()
 {
@@ -528,6 +611,10 @@ static void followCrumbs()
         current_priority = 0;
         return;
     }
+
+    if (current_crumb.navarea != crumbs[0].navarea)
+        time_spent_on_crumb.update();
+    current_crumb = crumbs[0];
 
     // We are close enough to the crumb to have reached it
     if (crumbs[0].vec.DistTo(g_pLocalPlayer->v_Origin) < 50)
@@ -639,7 +726,7 @@ void vischeckPath()
         // Check if we can pass, if not, abort pathing and mark as bad
         if (!IsPlayerPassableNavigation(current_center, next_center))
         {
-            // Mark as invalid for 60 seconds
+            // Mark as invalid for a while
             map->vischeck_cache[key] = { TICKCOUNT_TIMESTAMP(*vischeck_cache_time), false };
             abandonPath();
         }
@@ -649,6 +736,44 @@ void vischeckPath()
             map->vischeck_cache[key] = { TICKCOUNT_TIMESTAMP(*vischeck_cache_time), true };
         }
     }
+}
+
+static Timer blacklist_check_timer{};
+// Check if one of the crumbs is suddenly blacklisted
+void checkBlacklist()
+{
+    // Only check every 500ms
+    if (!blacklist_check_timer.test_and_set(500))
+        return;
+
+    CNavArea *local_area = map->findClosestNavSquare(g_pLocalPlayer->v_Origin);
+    for (auto &entry : map->free_blacklist)
+    {
+        // Local player is in a blocked area, so temporarily remove the blacklist as else we would be stuck
+        if (entry.first == local_area)
+        {
+            map->free_blacklist_blocked = true;
+            return;
+        }
+    }
+
+    // Local player is not blocking the nav area, so blacklist should not be marked as blocked
+    map->free_blacklist_blocked = false;
+
+    bool should_abandon = false;
+    for (auto &crumb : crumbs)
+    {
+        if (should_abandon)
+            break;
+        // A path Node is blacklisted, abandon pathing
+        for (auto &entry : map->free_blacklist)
+        {
+            if (entry.first == crumb.navarea)
+                should_abandon = true;
+        }
+    }
+    if (should_abandon)
+        abandonPath();
 }
 
 void updateStuckTime()
@@ -703,6 +828,7 @@ void CreateMove()
 
     if (vischeck_runtime)
         vischeckPath();
+    checkBlacklist();
 
     followCrumbs();
     updateStuckTime();
@@ -738,6 +864,43 @@ void LevelInit()
     else
     {
         map->Reset();
+    }
+}
+
+// Return the whole thing
+std::unordered_map<CNavArea *, BlacklistReason> *getFreeBlacklist()
+{
+    return &map->free_blacklist;
+}
+
+// Return a specific category, we keep the same indexes to provide single element erasing
+std::unordered_map<CNavArea *, BlacklistReason> getFreeBlacklist(BlacklistReason reason)
+{
+    std::unordered_map<CNavArea *, BlacklistReason> return_map;
+    for (auto &entry : map->free_blacklist)
+    {
+        // Category matches
+        if (entry.second.value == reason.value)
+            return_map[entry.first] = entry.second;
+    }
+    return return_map;
+}
+
+// Clear whole blacklist
+void clearFreeBlacklist()
+{
+    map->free_blacklist.clear();
+}
+
+// Clear by category
+void clearFreeBlacklist(BlacklistReason reason)
+{
+    for (auto it = begin(map->free_blacklist); it != end(map->free_blacklist);)
+    {
+        if (it->second.value == reason.value)
+            it = map->free_blacklist.erase(it); // previously this was something like m_map.erase(it++);
+        else
+            ++it;
     }
 }
 
@@ -807,9 +970,9 @@ Vector loc;
 
 static CatCommand nav_set("nav_set", "Debug nav find", []() { loc = g_pLocalPlayer->v_Origin; });
 
-static CatCommand nav_path("nav_path", "Debug nav path", []() { NavEngine::navTo(loc, 5, true, true, false); });
+static CatCommand nav_path("nav_path", "Debug nav path", []() { NavEngine::navTo(loc, 20, true, true, false); });
 
-static CatCommand nav_path_noreapth("nav_path_norepath", "Debug nav path", []() { NavEngine::navTo(loc, 5, false, true, false); });
+static CatCommand nav_path_noreapth("nav_path_norepath", "Debug nav path", []() { NavEngine::navTo(loc, 20, false, true, false); });
 
 static CatCommand nav_init("nav_init", "Reload nav mesh", []() {
     NavEngine::map.reset();
