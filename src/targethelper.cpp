@@ -22,11 +22,20 @@ int GetScoreForEntity(CachedEntity *entity)
 {
     if (!entity)
         return 0;
-    // TODO
+
     if (entity->m_Type() == ENTITY_BUILDING)
     {
         if (entity->m_iClassID() == CL_CLASS(CObjectSentrygun))
         {
+            bool is_strong_class = g_pLocalPlayer->clazz == tf_heavy || g_pLocalPlayer->clazz == tf_soldier;
+
+            if (is_strong_class)
+            {
+                float distance = (g_pLocalPlayer->v_Origin - entity->m_vecOrigin()).Length();
+                if (distance < 400)
+                    return 100;
+                return 60;
+            }
             return 1;
         }
         return 0;
@@ -94,7 +103,7 @@ int GetScoreForEntity(CachedEntity *entity)
         total = 999;
     if (IsSentryBuster(entity))
         total = 0;
-    if (clazz == tf_medic)
-        total = 999; // TODO only for mvm
+    if (clazz == tf_medic && g_pGameRules->isPVEMode)
+        total = 999;
     return total;
 }
