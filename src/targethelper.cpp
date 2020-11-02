@@ -32,9 +32,11 @@ int GetScoreForEntity(CachedEntity *entity)
             if (is_strong_class)
             {
                 float distance = (g_pLocalPlayer->v_Origin - entity->m_vecOrigin()).Length();
-                if (distance < 400)
-                    return 100;
-                return 60;
+                if (distance < 400.0f)
+                    return 120;
+                else if (distance < 1100.0f)
+                    return 60;
+                return 30;
             }
             return 1;
         }
