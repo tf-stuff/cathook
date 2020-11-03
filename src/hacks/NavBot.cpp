@@ -7,6 +7,7 @@
 #include "localplayer.hpp"
 #include "sdk.hpp"
 #include "entitycache.hpp"
+#include "CaptureLogic.hpp"
 #include "PlayerTools.hpp"
 
 namespace hacks::tf2::NavBot
@@ -15,6 +16,7 @@ static settings::Boolean enabled("navbot.enabled", "false");
 static settings::Boolean search_health("navbot.search-health", "true");
 static settings::Boolean search_ammo("navbot.search-ammo", "true");
 static settings::Boolean stay_near("navbot.stay-near", "true");
+static settings::Boolean capture_objectives("navbot.capture-objectives", "false");
 static settings::Boolean snipe_sentries("navbot.snipe-sentries", "true");
 static settings::Boolean snipe_sentries_shortrange("navbot.snipe-sentries.shortrange", "true");
 static settings::Boolean autojump("navbot.autojump.enabled", "false");
@@ -28,6 +30,7 @@ enum Priority_list
     patrol = 5,
     lowprio_health,
     staynear,
+    capture,
     snipe_sentry,
     ammo,
     health
@@ -44,7 +47,7 @@ struct bot_class_config
 // Sniper, stay far away and snipe
 constexpr bot_class_config CONFIG_SNIPER{ 700.0f, FLT_MAX, true };
 // A short range class like scout or heavy, run at the enemy
-constexpr bot_class_config CONFIG_SHORT_RANGE{ 0.0f, 400.0f, false };
+constexpr bot_class_config CONFIG_SHORT_RANGE{ 175.0f, 400.0f, false };
 // A mid range class like the Soldier, don't get too close but also don't run too far away
 constexpr bot_class_config CONFIG_MID_RANGE{ 500.0f, 4000.0f, true };
 
@@ -359,6 +362,11 @@ bool stayNear()
     // Far range classes do not need to repath nearly as often as close range ones.
     if (!staynear_cooldown.test_and_set(selected_config.prefer_far ? 2000 : 500))
         return navparser::NavEngine::current_priority == staynear;
+
+    // Too high priority, so don't try
+    if (navparser::NavEngine::current_priority > staynear)
+        return false;
+
     // Check and use our previous target if available
     if (isStayNearTargetValid(previous_target))
     {
@@ -521,6 +529,158 @@ bool snipeSentries()
     return false;
 }
 
+enum capture_type
+{
+    no_capture,
+    ctf,
+    payload,
+    controlpoints
+};
+
+static capture_type current_capturetype = no_capture;
+// Overwrite to return true for payload carts as an example
+static bool overwrite_capture = false;
+// Doomsday is a ctf + payload map which breaks capturing...
+static bool is_doomsday = false;
+
+std::optional<Vector> getCtfGoal(int our_team, int enemy_team)
+{
+    // Get Flag related information
+    auto status   = flagcontroller::getStatus(enemy_team);
+    auto position = flagcontroller::getPosition(enemy_team);
+    auto carrier  = flagcontroller::getCarrier(enemy_team);
+
+    // No flag :(
+    if (!position)
+        return std::nullopt;
+
+    current_capturetype = ctf;
+
+    // Flag is taken by us
+    if (status == TF_FLAGINFO_STOLEN)
+    {
+        // CTF is the current capture type.
+        if (carrier == LOCAL_E)
+        {
+            // Return our capture point location
+            auto team_flag = flagcontroller::getFlag(our_team);
+            return team_flag.spawn_pos;
+        }
+    }
+    // Get the flag if not taken by us already
+    else
+    {
+        return position;
+    }
+    return std::nullopt;
+}
+
+std::optional<Vector> getPayloadGoal(int our_team)
+{
+    auto position = plcontroller::getClosestPayload(g_pLocalPlayer->v_Origin, our_team);
+    // No payloads found :(
+    if (!position)
+        return std::nullopt;
+    current_capturetype = payload;
+
+    // Adjust position so it's not floating high up, provided the local player is close.
+    if (LOCAL_E->m_vecOrigin().DistTo(*position) <= 150.0f)
+        (*position).z = LOCAL_E->m_vecOrigin().z;
+    // If close enough, don't move (mostly due to lifts)
+    if ((*position).DistTo(LOCAL_E->m_vecOrigin()) <= 50.0f)
+    {
+        overwrite_capture = true;
+        return std::nullopt;
+    }
+    else
+        return position;
+}
+
+std::optional<Vector> getControlPointGoal(int our_team)
+{
+    static Vector previous_position(0.0f);
+    static Vector randomized_position(0.0f);
+
+    auto position = cpcontroller::getClosestControlPoint(g_pLocalPlayer->v_Origin, our_team);
+    // No points found :(
+    if (!position)
+        return std::nullopt;
+
+    // Randomize where on the point we walk a bit so bots don't just stand there
+    if (previous_position != *position || !navparser::NavEngine::isPathing())
+    {
+        previous_position   = *position;
+        randomized_position = *position;
+        randomized_position.x += RandomFloat(0.0f, 100.0f);
+        randomized_position.y += RandomFloat(0.0f, 100.0f);
+    }
+
+    current_capturetype = controlpoints;
+    // Try to navigate
+    return randomized_position;
+}
+
+// Try to capture objectives
+bool captureObjectives()
+{
+    static Timer capture_timer;
+    static Vector previous_target(0.0f);
+    // Not active or on a doomsday map
+    if (!capture_objectives || is_doomsday || !capture_timer.check(2000))
+        return false;
+
+    // Priority too high, don't try
+    if (navparser::NavEngine::current_priority > capture)
+        return false;
+
+    // Where we want to go
+    std::optional<Vector> target;
+
+    int our_team   = g_pLocalPlayer->team;
+    int enemy_team = our_team == TEAM_BLU ? TEAM_RED : TEAM_BLU;
+
+    current_capturetype = no_capture;
+    overwrite_capture   = false;
+
+    // Run ctf logic
+    target = getCtfGoal(our_team, enemy_team);
+    // Not ctf, run payload
+    if (current_capturetype == no_capture)
+    {
+        target = getPayloadGoal(our_team);
+        // Not payload, run control points
+        if (current_capturetype == no_capture)
+        {
+            target = getControlPointGoal(our_team);
+        }
+    }
+
+    // Overwritten, for example because we are currently on the payload, cancel any sort of pathing and return true
+    if (overwrite_capture)
+    {
+        navparser::NavEngine::cancelPath();
+        return true;
+    }
+    // No target, bail and set on cooldown
+    else if (!target)
+    {
+        capture_timer.update();
+        return false;
+    }
+    // If priority is not capturing or we have a new target, try to path there
+    else if (navparser::NavEngine::current_priority != capture || *target != previous_target)
+    {
+        if (navparser::NavEngine::navTo(*target, capture, true, !navparser::NavEngine::isPathing()))
+        {
+            previous_target = *target;
+            return true;
+        }
+        else
+            capture_timer.update();
+    }
+    return false;
+}
+
 static std::pair<CachedEntity *, float> getNearestPlayerDistance()
 {
     float distance         = FLT_MAX;
@@ -539,6 +699,8 @@ static std::pair<CachedEntity *, float> getNearestPlayerDistance()
 
 static void autoJump()
 {
+    if (!autojump)
+        return;
     static Timer last_jump{};
     if (!last_jump.test_and_set(200))
         return;
@@ -667,6 +829,9 @@ void CreateMove()
     // Try to snipe sentries
     else if (snipeSentries())
         return;
+    // Try to capture objectives
+    else if (captureObjectives())
+        return;
     // Try to stalk enemies
     else if (stayNear())
         return;
@@ -677,13 +842,24 @@ void CreateMove()
     else if (doRoam())
         return;
 }
+
 void LevelInit()
 {
     // Make it run asap
     refresh_sniperspots_timer.last -= std::chrono::seconds(60);
     sniper_spots.clear();
+    is_doomsday = false;
+    // Doomsday sucks
+    // TODO: add proper doomsday implementation
+    auto map_name = std::string(g_IEngine->GetLevelName());
+    if (g_IEngine->GetLevelName() && map_name.find("sd_doomsday") != map_name.npos)
+        is_doomsday = true;
 }
 
-static InitRoutine init([]() { EC::Register(EC::CreateMove, CreateMove, "navbot_cm"); });
+static InitRoutine init([]() {
+    EC::Register(EC::CreateMove, CreateMove, "navbot_cm");
+    EC::Register(EC::LevelInit, LevelInit, "navbot_levelinit");
+    LevelInit();
+});
 
 } // namespace hacks::tf2::NavBot

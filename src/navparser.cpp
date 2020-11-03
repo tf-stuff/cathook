@@ -341,9 +341,9 @@ public:
         long long timetaken      = duration_cast<nanoseconds>(high_resolution_clock::now() - begin_pathing).count();
         if (log_pathing)
             logging::Info("Pathing: Pather result: %i. Time taken (NS): %lld", result, timetaken);
-        // If no result found, return empty Vector
-        if (0 == micropather::MicroPather::NO_SOLUTION)
-            return {};
+        // Start and end are the same, return start node
+        if (result == micropather::MicroPather::START_END_SAME)
+            return { reinterpret_cast<void *>(local) };
 
         return pathNodes;
     }
@@ -528,11 +528,7 @@ bool navTo(const Vector &destination, int priority, bool should_repath, bool nav
         return false;
 
     if (!nav_to_local)
-    {
         path.erase(path.begin());
-        if (path.empty())
-            return false;
-    }
     crumbs.clear();
 
     for (size_t i = 0; i < path.size(); i++)
