@@ -83,6 +83,7 @@ public:
     offset_t m_bPlacing;
     offset_t m_bBuilding;
     offset_t m_bPlasmaDisable;
+    offset_t m_bCarryDeploy;
 
     // teleporter
     offset_t m_iTeleState; // teleport state [1 = idle, 2 = active, 3 = teleporting, 4 = charging]

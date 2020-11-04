@@ -60,6 +60,8 @@ bool isReady();
 // Are we currently pathing?
 bool isPathing();
 CNavFile *getNavFile();
+// Get closest nav square to target vector
+CNavArea *findClosestNavSquare(const Vector origin);
 // Get the path nodes
 std::vector<Crumb> *getCrumbs();
 bool navTo(const Vector &destination, int priority = 5, bool should_repath = true, bool nav_to_local = true, bool is_repath = true);

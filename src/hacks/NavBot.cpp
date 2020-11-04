@@ -18,12 +18,18 @@ static settings::Boolean search_ammo("navbot.search-ammo", "true");
 static settings::Boolean stay_near("navbot.stay-near", "true");
 static settings::Boolean capture_objectives("navbot.capture-objectives", "false");
 static settings::Boolean snipe_sentries("navbot.snipe-sentries", "true");
-static settings::Boolean snipe_sentries_shortrange("navbot.snipe-sentries.shortrange", "true");
+static settings::Boolean snipe_sentries_shortrange("navbot.snipe-sentries.shortrange", "false");
+static settings::Boolean escape_danger("navbot.escape-danger", "true");
+static settings::Boolean escape_danger_ctf_cap("navbot.escape-danger.ctf-cap", "false");
 static settings::Boolean autojump("navbot.autojump.enabled", "false");
 static settings::Boolean primary_only("navbot.primary-only", "true");
 static settings::Float jump_distance("navbot.autojump.trigger-distance", "300");
 static settings::Int blacklist_delay("navbot.proximity-blacklist.delay", "500");
 static settings::Int blacklist_delay_dormat("navbot.proximity-blacklist.delay-dormant", "1000");
+static settings::Int blacklist_slightdanger_limit("navbot.proximity-blacklist.slight-danger.amount", "2");
+#if ENABLE_VISUALS
+static settings::Boolean draw_danger("navbot.draw-danger", "false");
+#endif
 
 enum Priority_list
 {
@@ -33,23 +39,25 @@ enum Priority_list
     capture,
     snipe_sentry,
     ammo,
-    health
+    health,
+    danger
 };
 
 // For stay near, min and max distance we should be from the enemy.
 struct bot_class_config
 {
-    float min;
+    float min_danger;
+    float min_slight_danger;
     float max;
     bool prefer_far;
 };
 
 // Sniper, stay far away and snipe
-constexpr bot_class_config CONFIG_SNIPER{ 700.0f, FLT_MAX, true };
+constexpr bot_class_config CONFIG_SNIPER{ 500.0f, 700.0f, FLT_MAX, true };
 // A short range class like scout or heavy, run at the enemy
-constexpr bot_class_config CONFIG_SHORT_RANGE{ 175.0f, 400.0f, false };
+constexpr bot_class_config CONFIG_SHORT_RANGE{ 140.0f, 400.0f, 600.0f, false };
 // A mid range class like the Soldier, don't get too close but also don't run too far away
-constexpr bot_class_config CONFIG_MID_RANGE{ 500.0f, 4000.0f, true };
+constexpr bot_class_config CONFIG_MID_RANGE{ 300.0f, 500.0f, 4000.0f, true };
 
 bot_class_config selected_config = CONFIG_SNIPER;
 
@@ -182,6 +190,10 @@ void refreshSniperSpots()
                 sniper_spots.push_back(hiding_spot.m_pos);
 }
 
+#if ENABLE_VISUALS
+std::vector<Vector> slight_danger_drawlist_normal;
+std::vector<Vector> slight_danger_drawlist_dormant;
+#endif
 static Timer blacklist_update_timer{};
 static Timer dormant_update_timer{};
 void updateEnemyBlacklist()
@@ -199,7 +211,15 @@ void updateEnemyBlacklist()
     if (should_run_dormant)
         navparser::NavEngine::clearFreeBlacklist(navparser::ENEMY_DORMANT);
 
-    std::vector<Vector> checked_origins;
+    // Store the danger of the invidual nav areas
+    std::unordered_map<CNavArea *, int> dormant_slight_danger;
+    std::unordered_map<CNavArea *, int> normal_slight_danger;
+
+    // This is used to cache Dangerous areas between ents
+    std::unordered_map<CachedEntity *, std::vector<CNavArea *>> ent_marked_dormant_slight_danger;
+    std::unordered_map<CachedEntity *, std::vector<CNavArea *>> ent_marked_normal_slight_danger;
+
+    std::vector<std::pair<CachedEntity *, Vector>> checked_origins;
     for (int i = 1; i <= g_IEngine->GetMaxClients(); i++)
     {
         CachedEntity *ent = ENTITY(i);
@@ -223,11 +243,18 @@ void updateEnemyBlacklist()
         if (!origin)
             continue;
         bool should_check = true;
+
+        // Find already dangerous marked areas by other entities
+        auto to_loop = is_dormant ? &ent_marked_dormant_slight_danger : &ent_marked_normal_slight_danger;
+
+        // Add new danger entries
+        auto to_mark = is_dormant ? &dormant_slight_danger : &normal_slight_danger;
+
         for (auto &checked_origin : checked_origins)
         {
             // If this origin is closer than a quarter of the min HU (or less than 100 HU) to a cached one, don't go through all nav areas again
             // DistToSqr is much faster than DistTo which is why we use it here
-            auto distance = selected_config.min;
+            auto distance = selected_config.min_slight_danger;
 
             distance *= 0.25f;
             distance = std::max(100.0f, distance);
@@ -235,9 +262,19 @@ void updateEnemyBlacklist()
             // Square the distance
             distance *= distance;
 
-            if ((*origin).DistToSqr(checked_origin) < distance)
+            if ((*origin).DistToSqr(checked_origin.second) < distance)
             {
                 should_check = false;
+
+                bool is_absolute_danger = distance < selected_config.min_danger;
+                if (!is_absolute_danger)
+                    for (auto &area : (*to_loop)[checked_origin.first])
+                    {
+                        (*to_mark)[area]++;
+                        if ((*to_mark)[area] >= *blacklist_slightdanger_limit)
+                            (*navparser::NavEngine::getFreeBlacklist())[area] = is_dormant ? navparser::ENEMY_DORMANT : navparser::ENEMY_NORMAL;
+                    }
+
                 break;
             }
         }
@@ -246,18 +283,55 @@ void updateEnemyBlacklist()
 
         // Now check which areas they are close to
         for (CNavArea &nav_area : navparser::NavEngine::getNavFile()->m_areas)
-            if (nav_area.m_center.DistTo(*origin) < selected_config.min)
-                (*navparser::NavEngine::getFreeBlacklist())[&nav_area] = is_dormant ? navparser::ENEMY_DORMANT : navparser::ENEMY_NORMAL;
+        {
+            float distance = nav_area.m_center.DistTo(*origin);
+            // Too close to count as slight danger
+            bool is_absolute_danger = distance < selected_config.min_danger;
+            if (distance < selected_config.min_slight_danger)
+            {
+                // Add as marked area
+                (*to_loop)[ent].push_back(&nav_area);
 
-        checked_origins.push_back(*origin);
+                // Just slightly dangerous, only mark as such if it's clear
+                if (!is_absolute_danger)
+                {
+                    (*to_mark)[&nav_area]++;
+                    if ((*to_mark)[&nav_area] < *blacklist_slightdanger_limit)
+                        continue;
+                }
+                (*navparser::NavEngine::getFreeBlacklist())[&nav_area] = is_dormant ? navparser::ENEMY_DORMANT : navparser::ENEMY_NORMAL;
+            }
+        }
+        checked_origins.push_back(std::pair<CachedEntity *, Vector>(ent, *origin));
     }
+#if ENABLE_VISUALS
+    // Store slight danger areas for drawing
+    if (normal_slight_danger.size())
+    {
+        slight_danger_drawlist_normal.clear();
+        for (auto &area : normal_slight_danger)
+            if (area.second < *blacklist_slightdanger_limit)
+                slight_danger_drawlist_normal.push_back(area.first->m_center);
+    }
+    if (dormant_slight_danger.size())
+    {
+        slight_danger_drawlist_dormant.clear();
+        for (auto &area : dormant_slight_danger)
+            if (area.second < *blacklist_slightdanger_limit)
+                slight_danger_drawlist_dormant.push_back(area.first->m_center);
+    }
+#endif
 }
 
 // Roam around map
 bool doRoam()
 {
+    static Timer fail_timer;
     // No sniper spots :shrug:
     if (!sniper_spots.size())
+        return false;
+    // Failed recently
+    if (!fail_timer.check(500))
         return false;
     // Don't overwrite current roam
     if (navparser::NavEngine::current_priority == patrol)
@@ -268,22 +342,28 @@ bool doRoam()
 
     if (navparser::NavEngine::navTo(sniper_spots[0], patrol))
         return true;
+    else
+        fail_timer.update();
 
     return false;
 }
 
 // Check if an area is valid for stay near. the Third parameter is to save some performance.
-bool isAreaValidForStayNear(Vector ent_origin, Vector area_origin, bool fix_local_z = true)
+bool isAreaValidForStayNear(Vector ent_origin, CNavArea *area, bool fix_local_z = true)
 {
     if (fix_local_z)
         ent_origin.z += navparser::PLAYER_JUMP_HEIGHT;
+    auto area_origin = area->m_center;
     area_origin.z += navparser::PLAYER_JUMP_HEIGHT;
 
     // Do all the distance checks
     float distance = ent_origin.DistToSqr(area_origin);
 
     // Too close
-    if (distance < selected_config.min * selected_config.min)
+    if (distance < selected_config.min_danger * selected_config.min_danger)
+        return false;
+    // Blacklisted
+    if (navparser::NavEngine::getFreeBlacklist()->find(area) != navparser::NavEngine::getFreeBlacklist()->end())
         return false;
     // Too far away
     if (distance > selected_config.max * selected_config.max)
@@ -313,7 +393,7 @@ bool stayNearTarget(CachedEntity *ent)
         auto area_origin = area.m_center;
 
         // Is this area valid for stay near purposes?
-        if (!isAreaValidForStayNear(*ent_origin, area_origin, false))
+        if (!isAreaValidForStayNear(*ent_origin, &area, false))
             continue;
 
         float distance = (*ent_origin).DistToSqr(area_origin);
@@ -382,12 +462,12 @@ bool stayNear()
                 {
                     auto last_crumb = (*crumbs)[crumbs->size() - 2];
                     // Area is still valid, stay on it
-                    if (isAreaValidForStayNear(*ent_origin, last_crumb.navarea->m_center))
+                    if (isAreaValidForStayNear(*ent_origin, last_crumb.navarea))
                         return true;
                 }
             }
             // Else Check our origin for validity (Only for ranged classes)
-            else if (selected_config.prefer_far && isAreaValidForStayNear(*ent_origin, LOCAL_E->m_vecOrigin()))
+            else if (selected_config.prefer_far && isAreaValidForStayNear(*ent_origin, navparser::NavEngine::findClosestNavSquare(LOCAL_E->m_vecOrigin())))
                 return true;
         }
         // Else we try to path again
@@ -681,6 +761,61 @@ bool captureObjectives()
     return false;
 }
 
+// Run away from dangerous areas
+bool escapeDanger()
+{
+    if (!escape_danger)
+        return false;
+    // Don't escape while we have the intel
+    if (!escape_danger_ctf_cap)
+    {
+        auto flag_carrier = flagcontroller::getCarrier(g_pLocalPlayer->team);
+        if (flag_carrier == LOCAL_E)
+            return false;
+    }
+    auto *local_nav = navparser::NavEngine::findClosestNavSquare(g_pLocalPlayer->v_Origin);
+    auto blacklist  = navparser::NavEngine::getFreeBlacklist();
+
+    // In danger, try to run
+    if (blacklist->find(local_nav) != blacklist->end())
+    {
+        static CNavArea *target_area = nullptr;
+        // Already running and our target is still valid
+        if (navparser::NavEngine::current_priority == danger && blacklist->find(target_area) == blacklist->end())
+            return true;
+
+        std::vector<CNavArea *> nav_areas_ptr;
+        // Copy a ptr list (sadly cat_nav_init exists so this cannot be only done once)
+        for (auto &nav_area : navparser::NavEngine::getNavFile()->m_areas)
+            nav_areas_ptr.push_back(&nav_area);
+
+        // Sort by distance
+        std::sort(nav_areas_ptr.begin(), nav_areas_ptr.end(), [](CNavArea *a, CNavArea *b) { return a->m_center.DistToSqr(g_pLocalPlayer->v_Origin) < b->m_center.DistToSqr(g_pLocalPlayer->v_Origin); });
+
+        int calls = 0;
+        // Try to path away
+        for (auto area : nav_areas_ptr)
+        {
+            if (blacklist->find(area) == blacklist->end())
+            {
+                // only try the 5 closest valid areas though, something is wrong if this fails
+                calls++;
+                if (calls > 5)
+                    break;
+                if (navparser::NavEngine::navTo(area->m_center, danger))
+                {
+                    target_area = area;
+                    return true;
+                }
+            }
+        }
+    }
+    // No longer in danger
+    else if (navparser::NavEngine::current_priority == danger)
+        navparser::NavEngine::cancelPath();
+    return false;
+}
+
 static std::pair<CachedEntity *, float> getNearestPlayerDistance()
 {
     float distance         = FLT_MAX;
@@ -737,6 +872,10 @@ static slots getBestSlot(slots active_slot)
     }
     case tf_sniper:
     {
+        // Have a Huntsman, Always use primary
+        if (HasWeapon(LOCAL_E, 56) || HasWeapon(LOCAL_E, 1005) || HasWeapon(LOCAL_E, 1092))
+            return primary;
+
         if (nearest.second <= 300 && nearest.first->m_iHealth() < 75)
             return secondary;
         else if (nearest.second <= 400 && nearest.first->m_iHealth() < 75)
@@ -779,7 +918,7 @@ static void updateSlot()
     static Timer slot_timer{};
     if (!slot_timer.test_and_set(300))
         return;
-    if (CE_GOOD(LOCAL_E) && CE_GOOD(LOCAL_W) && LOCAL_E->m_bAlivePlayer())
+    if (CE_GOOD(LOCAL_E) && !HasCondition<TFCond_HalloweenGhostMode>(LOCAL_E) && CE_GOOD(LOCAL_W) && LOCAL_E->m_bAlivePlayer())
     {
         IClientEntity *weapon = RAW_ENT(LOCAL_W);
         // IsBaseCombatWeapon()
@@ -797,7 +936,7 @@ void CreateMove()
 {
     if (!enabled || !navparser::NavEngine::isReady())
         return;
-    if (CE_BAD(LOCAL_E) || !LOCAL_E->m_bAlivePlayer())
+    if (CE_BAD(LOCAL_E) || !LOCAL_E->m_bAlivePlayer() || HasCondition<TFCond_HalloweenGhostMode>(LOCAL_E))
         return;
 
     refreshSniperSpots();
@@ -810,8 +949,17 @@ void CreateMove()
         selected_config = CONFIG_SHORT_RANGE;
         break;
     case tf_sniper:
-        selected_config = CONFIG_SNIPER;
+    {
+        bool has_sniper = true;
+        // Using a Huntsman, use close range config
+        if (HasWeapon(LOCAL_E, 56) || HasWeapon(LOCAL_E, 1005) || HasWeapon(LOCAL_E, 1092))
+            has_sniper = false;
+        if (has_sniper)
+            selected_config = CONFIG_SNIPER;
+        else
+            selected_config = CONFIG_SHORT_RANGE;
         break;
+    }
     default:
         selected_config = CONFIG_MID_RANGE;
     }
@@ -820,8 +968,11 @@ void CreateMove()
     autoJump();
     updateEnemyBlacklist();
 
-    // First priority should be getting health
-    if (getHealth())
+    // Try to escape danger first of all
+    if (escapeDanger())
+        return;
+    // Second priority should be getting health
+    else if (getHealth())
         return;
     // If we aren't getting health, get ammo
     else if (getAmmo())
@@ -855,10 +1006,41 @@ void LevelInit()
     if (g_IEngine->GetLevelName() && map_name.find("sd_doomsday") != map_name.npos)
         is_doomsday = true;
 }
+#if ENABLE_VISUALS
+void Draw()
+{
+    if (!draw_danger || !navparser::NavEngine::isReady())
+        return;
+    for (auto &area : *navparser::NavEngine::getFreeBlacklist())
+    {
+        Vector out;
+
+        if (draw::WorldToScreen(area.first->m_center, out))
+            draw::Rectangle(out.x - 2.0f, out.y - 2.0f, 4.0f, 4.0f, colors::red);
+    }
+    for (auto &area : slight_danger_drawlist_normal)
+    {
+        Vector out;
+
+        if (draw::WorldToScreen(area, out))
+            draw::Rectangle(out.x - 2.0f, out.y - 2.0f, 4.0f, 4.0f, colors::orange);
+    }
+    for (auto &area : slight_danger_drawlist_dormant)
+    {
+        Vector out;
+
+        if (draw::WorldToScreen(area, out))
+            draw::Rectangle(out.x - 2.0f, out.y - 2.0f, 4.0f, 4.0f, colors::orange);
+    }
+}
+#endif
 
 static InitRoutine init([]() {
     EC::Register(EC::CreateMove, CreateMove, "navbot_cm");
     EC::Register(EC::LevelInit, LevelInit, "navbot_levelinit");
+#if ENABLE_VISUALS
+    EC::Register(EC::Draw, Draw, "navbot_draw");
+#endif
     LevelInit();
 });
 

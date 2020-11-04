@@ -376,9 +376,11 @@ public:
                 if (is_strong_class && (CE_BYTE(ent, netvar.m_bMiniBuilding) || CE_INT(ent, netvar.iUpgradeLevel) == 1))
                     continue;
 
-                // It's still building/being sapped, ignore
-                if (CE_BYTE(ent, netvar.m_bBuilding) || CE_BYTE(ent, netvar.m_bPlacing) || CE_BYTE(ent, netvar.m_bHasSapper))
+                // It's still building/being sapped, ignore.
+                // Unless it just was deployed from a carry, then it's dangerous
+                if ((!CE_BYTE(ent, netvar.m_bCarryDeploy) && CE_BYTE(ent, netvar.m_bBuilding)) || CE_BYTE(ent, netvar.m_bPlacing) || CE_BYTE(ent, netvar.m_bHasSapper))
                     continue;
+
                 // Get origin of the sentry
                 auto building_origin = GetBuildingPosition(ent);
                 // For dormant sentries we need to add the jump height to the z
@@ -502,6 +504,12 @@ CNavFile *getNavFile()
 {
     return &map->navfile;
 }
+
+CNavArea *findClosestNavSquare(const Vector origin)
+{
+    return map->findClosestNavSquare(origin);
+}
+
 std::vector<Crumb> *getCrumbs()
 {
     return &crumbs;

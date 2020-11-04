@@ -111,6 +111,17 @@ void NetVars::Init()
         this->m_bMiniBuilding           = gNetvars.get_offset("DT_BaseObject", "m_bMiniBuilding");
         this->m_bPlasmaDisable          = gNetvars.get_offset("DT_BaseObject", "m_bPlasmaDisable");
 
+        // any building
+        this->iUpgradeLevel   = gNetvars.get_offset("DT_BaseObject", "m_iUpgradeLevel");
+        this->m_hBuilder      = gNetvars.get_offset("DT_BaseObject", "m_hBuilder");
+        this->m_bCanPlace     = gNetvars.get_offset("DT_BaseObject", "m_bServerOverridePlacement");
+        this->m_bBuilding     = gNetvars.get_offset("DT_BaseObject", "m_bBuilding");
+        this->m_bCarryDeploy  = gNetvars.get_offset("DT_BaseObject", "m_bCarryDeploy");
+        this->m_iObjectType   = gNetvars.get_offset("DT_BaseObject", "m_iObjectType");
+        this->m_bHasSapper    = gNetvars.get_offset("DT_BaseObject", "m_bHasSapper");
+        this->m_bPlacing      = gNetvars.get_offset("DT_BaseObject", "m_bPlacing");
+        this->m_bMiniBuilding = gNetvars.get_offset("DT_BaseObject", "m_bMiniBuilding");
+
         // teleporter
         this->m_iTeleState                    = gNetvars.get_offset("DT_ObjectTeleporter", "m_iState");
         this->m_flTeleRechargeTime            = gNetvars.get_offset("DT_ObjectTeleporter", "m_flRechargeTime");

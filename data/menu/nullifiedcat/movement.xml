@@ -38,6 +38,8 @@
             <!--AutoVariable width="fill" target="navbot.engineer-mode" label="Enable Engineer mode"/-->
             <AutoVariable width="fill" target="navbot.search-health" label="Search health"/>
             <AutoVariable width="fill" target="navbot.search-ammo" label="Search ammo"/>
+            <AutoVariable width="fill" target="navbot.escape-danger" label="Escape danger"/>
+            <AutoVariable width="fill" target="navbot.escape-danger.ctf-cap" label="Escape danger w. intel" tooltip="Also try to escape from danger when carrying intel."/>
             <!--AutoVariable width="fill" target="navbot.spy-mode" label="Enable Spy mode"/>
             <AutoVariable width="fill" target="navbot.other-mode" label="General mode"/-->
             <AutoVariable width="fill" target="navbot.primary-only" label="Best weapon only"/>
