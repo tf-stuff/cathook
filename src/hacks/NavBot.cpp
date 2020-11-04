@@ -170,7 +170,8 @@ bool getAmmo()
     return false;
 }
 
-std::vector<Vector> sniper_spots;
+// Former is position, latter is until which tick it is ignored
+std::vector<std::pair<Vector, int>> sniper_spots;
 
 // Used for time between refreshing sniperspots
 static Timer refresh_sniperspots_timer{};
@@ -187,7 +188,7 @@ void refreshSniperSpots()
         for (auto &hiding_spot : area.m_hidingSpots)
             // Spots actually marked for sniping
             if (hiding_spot.IsExposed() || hiding_spot.IsGoodSniperSpot() || hiding_spot.IsIdealSniperSpot())
-                sniper_spots.push_back(hiding_spot.m_pos);
+                sniper_spots.push_back(std::pair<Vector, int>(hiding_spot.m_pos, 0));
 }
 
 #if ENABLE_VISUALS
@@ -284,10 +285,20 @@ void updateEnemyBlacklist()
         // Now check which areas they are close to
         for (CNavArea &nav_area : navparser::NavEngine::getNavFile()->m_areas)
         {
-            float distance = nav_area.m_center.DistTo(*origin);
+            float distance             = nav_area.m_center.DistTo(*origin);
+            float slight_danger_dist   = selected_config.min_slight_danger;
+            float absolute_danger_dist = selected_config.min_danger;
+
+            // Not dangerous, Still don't bump
+            if (!player_tools::shouldTarget(ent))
+            {
+                slight_danger_dist   = navparser::PLAYER_WIDTH * 2.0f;
+                absolute_danger_dist = navparser::PLAYER_WIDTH * 2.0f;
+            }
+
             // Too close to count as slight danger
-            bool is_absolute_danger = distance < selected_config.min_danger;
-            if (distance < selected_config.min_slight_danger)
+            bool is_absolute_danger = distance < absolute_danger_dist;
+            if (distance < slight_danger_dist)
             {
                 // Add as marked area
                 (*to_loop)[ent].push_back(&nav_area);
@@ -305,17 +316,20 @@ void updateEnemyBlacklist()
         checked_origins.push_back(std::pair<CachedEntity *, Vector>(ent, *origin));
     }
 #if ENABLE_VISUALS
+    if (should_run_dormant)
+        slight_danger_drawlist_dormant.clear();
+    if (should_run_normal)
+        slight_danger_drawlist_normal.clear();
+
     // Store slight danger areas for drawing
     if (normal_slight_danger.size())
     {
-        slight_danger_drawlist_normal.clear();
         for (auto &area : normal_slight_danger)
             if (area.second < *blacklist_slightdanger_limit)
                 slight_danger_drawlist_normal.push_back(area.first->m_center);
     }
     if (dormant_slight_danger.size())
     {
-        slight_danger_drawlist_dormant.clear();
         for (auto &area : dormant_slight_danger)
             if (area.second < *blacklist_slightdanger_limit)
                 slight_danger_drawlist_dormant.push_back(area.first->m_center);
@@ -330,20 +344,37 @@ bool doRoam()
     // No sniper spots :shrug:
     if (!sniper_spots.size())
         return false;
-    // Failed recently
-    if (!fail_timer.check(500))
+    // Failed recently, wait a while
+    if (!fail_timer.check(1000))
         return false;
     // Don't overwrite current roam
     if (navparser::NavEngine::current_priority == patrol)
         return false;
 
-    // Randomly shuffle
-    std::random_shuffle(sniper_spots.begin(), sniper_spots.end());
+    // Get closest sniper spots
+    std::sort(sniper_spots.begin(), sniper_spots.end(), [](std::pair<Vector, int> a, std::pair<Vector, int> b) { return a.first.DistTo(g_pLocalPlayer->v_Origin) < b.first.DistTo(g_pLocalPlayer->v_Origin); });
 
-    if (navparser::NavEngine::navTo(sniper_spots[0], patrol))
-        return true;
-    else
-        fail_timer.update();
+    bool tried_pathing = false;
+    for (int i = 0; i < sniper_spots.size(); i++)
+    {
+        // Timed out
+        if (sniper_spots[i].second > g_GlobalVars->tickcount)
+            continue;
+
+        tried_pathing = true;
+
+        // Ignore for spot for 30s
+        sniper_spots[i].second = TICKCOUNT_TIMESTAMP(30);
+        if (navparser::NavEngine::navTo(sniper_spots[i].first, patrol))
+            return true;
+    }
+
+    // Every sniper spot is on cooldown, refresh cooldowns
+    if (!tried_pathing)
+        for (auto &spot : sniper_spots)
+            spot.second = 0;
+    // Failed, time out
+    fail_timer.update();
 
     return false;
 }
@@ -1011,13 +1042,6 @@ void Draw()
 {
     if (!draw_danger || !navparser::NavEngine::isReady())
         return;
-    for (auto &area : *navparser::NavEngine::getFreeBlacklist())
-    {
-        Vector out;
-
-        if (draw::WorldToScreen(area.first->m_center, out))
-            draw::Rectangle(out.x - 2.0f, out.y - 2.0f, 4.0f, 4.0f, colors::red);
-    }
     for (auto &area : slight_danger_drawlist_normal)
     {
         Vector out;
@@ -1031,6 +1055,13 @@ void Draw()
 
         if (draw::WorldToScreen(area, out))
             draw::Rectangle(out.x - 2.0f, out.y - 2.0f, 4.0f, 4.0f, colors::orange);
+    }
+    for (auto &area : *navparser::NavEngine::getFreeBlacklist())
+    {
+        Vector out;
+
+        if (draw::WorldToScreen(area.first->m_center, out))
+            draw::Rectangle(out.x - 2.0f, out.y - 2.0f, 4.0f, 4.0f, colors::red);
     }
 }
 #endif

@@ -49,8 +49,6 @@ static settings::Int stuck_expire_time{ "nav.anti-stuck.expire-time", "10" };
 static settings::Int stuck_blacklist_time{ "nav.anti-stuck.blacklist-time", "120" };
 static settings::Int sticky_ignore_time{ "nav.ignore.sticky-time", "15" };
 
-#define TICKCOUNT_TIMESTAMP(seconds) (g_GlobalVars->tickcount + int(seconds / g_GlobalVars->interval_per_tick))
-
 // Cast a Ray and return if it hit
 static bool CastRay(Vector origin, Vector endpos, unsigned mask, ITraceFilter *filter)
 {
