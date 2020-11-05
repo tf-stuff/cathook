@@ -43,21 +43,21 @@ enum Priority_list
     danger
 };
 
-// For stay near, min and max distance we should be from the enemy.
+// Controls the bot parameters like distance from enemy
 struct bot_class_config
 {
-    float min_danger;
+    float min_full_danger;
     float min_slight_danger;
     float max;
     bool prefer_far;
 };
 
-// Sniper, stay far away and snipe
-constexpr bot_class_config CONFIG_SNIPER{ 500.0f, 700.0f, FLT_MAX, true };
+// Sniper, Go close to enemy since we can oneshot him, but avoid if we have multiple
+constexpr bot_class_config CONFIG_SNIPER{ 300.0f, 800.0f, FLT_MAX, true };
 // A short range class like scout or heavy, run at the enemy
 constexpr bot_class_config CONFIG_SHORT_RANGE{ 140.0f, 400.0f, 600.0f, false };
 // A mid range class like the Soldier, don't get too close but also don't run too far away
-constexpr bot_class_config CONFIG_MID_RANGE{ 300.0f, 500.0f, 4000.0f, true };
+constexpr bot_class_config CONFIG_MID_RANGE{ 200.0f, 400.0f, 4000.0f, true };
 
 bot_class_config selected_config = CONFIG_SNIPER;
 
@@ -267,7 +267,7 @@ void updateEnemyBlacklist()
             {
                 should_check = false;
 
-                bool is_absolute_danger = distance < selected_config.min_danger;
+                bool is_absolute_danger = distance < selected_config.min_full_danger;
                 if (!is_absolute_danger)
                     for (auto &area : (*to_loop)[checked_origin.first])
                     {
@@ -287,7 +287,7 @@ void updateEnemyBlacklist()
         {
             float distance             = nav_area.m_center.DistTo(*origin);
             float slight_danger_dist   = selected_config.min_slight_danger;
-            float absolute_danger_dist = selected_config.min_danger;
+            float absolute_danger_dist = selected_config.min_full_danger;
 
             // Not dangerous, Still don't bump
             if (!player_tools::shouldTarget(ent))
@@ -391,7 +391,7 @@ bool isAreaValidForStayNear(Vector ent_origin, CNavArea *area, bool fix_local_z 
     float distance = ent_origin.DistToSqr(area_origin);
 
     // Too close
-    if (distance < selected_config.min_danger * selected_config.min_danger)
+    if (distance < selected_config.min_full_danger * selected_config.min_full_danger)
         return false;
     // Blacklisted
     if (navparser::NavEngine::getFreeBlacklist()->find(area) != navparser::NavEngine::getFreeBlacklist()->end())
