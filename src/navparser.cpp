@@ -694,7 +694,7 @@ static void followCrumbs()
     }*/
 
     // Look at path
-    if (look && !hacks::shared::aimbot::CurrentTarget())
+    if (look && !hacks::shared::aimbot::isAiming())
     {
         Vector next{ crumbs[0].vec.x, crumbs[0].vec.y, g_pLocalPlayer->v_Eye.z };
         next = GetAimAtAngles(g_pLocalPlayer->v_Eye, next);
