@@ -97,6 +97,29 @@ bool shouldSearchAmmo()
     return false;
 }
 
+// Get Valid Dispensers (Used for health/ammo)
+std::vector<CachedEntity *> getDispensers()
+{
+    std::vector<CachedEntity *> entities;
+    for (int i = g_IEngine->GetMaxClients() + 1; i < MAX_ENTITIES; i++)
+    {
+        CachedEntity *ent = ENTITY(i);
+        if (CE_BAD(ent) || ent->m_iClassID() != CL_CLASS(CObjectDispenser) || ent->m_iTeam() != g_pLocalPlayer->team)
+            continue;
+        if (CE_BYTE(ent, netvar.m_bCarryDeploy) || CE_BYTE(ent, netvar.m_bHasSapper) || CE_BYTE(ent, netvar.m_bBuilding))
+            continue;
+
+        // This fixes the fact that players can just place dispensers in unreachable locations
+        auto local_nav = navparser::NavEngine::findClosestNavSquare(ent->m_vecOrigin());
+        if (local_nav->getNearestPoint(ent->m_vecOrigin().AsVector2D()).DistTo(ent->m_vecOrigin()) > 300.0f || local_nav->getNearestPoint(ent->m_vecOrigin().AsVector2D()).z - ent->m_vecOrigin().z > navparser::PLAYER_JUMP_HEIGHT)
+            continue;
+        entities.push_back(ent);
+    }
+    // Sort by distance, closer is better
+    std::sort(entities.begin(), entities.end(), [](CachedEntity *a, CachedEntity *b) { return a->m_flDistance() < b->m_flDistance(); });
+    return entities;
+}
+
 // Get entities of given itemtypes (Used for health/ammo)
 std::vector<CachedEntity *> getEntities(const std::vector<k_EItemType> &itemtypes)
 {
@@ -128,13 +151,29 @@ bool getHealth(bool low_priority = false)
         return navparser::NavEngine::current_priority == priority;
     if (shouldSearchHealth(low_priority))
     {
-        // Already pathing
+        // Already pathing, only try to repath every 2s
         if (navparser::NavEngine::current_priority == priority)
-            return true;
+        {
+            static Timer repath_timer;
+            if (!repath_timer.test_and_set(2000))
+                return true;
+        }
         auto healthpacks = getEntities({ ITEM_HEALTH_SMALL, ITEM_HEALTH_MEDIUM, ITEM_HEALTH_LARGE });
-        for (auto healthpack : healthpacks)
+        auto dispensers  = getDispensers();
+
+        auto total_ents = healthpacks;
+
+        // Add dispensers and sort list again
+        if (!dispensers.empty())
+        {
+            total_ents.reserve(healthpacks.size() + dispensers.size());
+            total_ents.insert(total_ents.end(), dispensers.begin(), dispensers.end());
+            std::sort(total_ents.begin(), total_ents.end(), [](CachedEntity *a, CachedEntity *b) { return a->m_flDistance() < b->m_flDistance(); });
+        }
+
+        for (auto healthpack : total_ents)
             // If we succeeed, don't try to path to other packs
-            if (navparser::NavEngine::navTo(healthpack->m_vecOrigin(), priority))
+            if (navparser::NavEngine::navTo(healthpack->m_vecOrigin(), priority, true, healthpack->m_vecOrigin().DistToSqr(g_pLocalPlayer->v_Origin) > 200.0f * 200.0f))
                 return true;
         health_cooldown.update();
     }
@@ -150,13 +189,28 @@ bool getAmmo()
         return navparser::NavEngine::current_priority == ammo;
     if (shouldSearchAmmo())
     {
-        // Already pathing
+        // Already pathing, only try to repath every 2s
         if (navparser::NavEngine::current_priority == ammo)
-            return true;
-        auto ammopacks = getEntities({ ITEM_AMMO_SMALL, ITEM_AMMO_MEDIUM, ITEM_AMMO_LARGE });
-        for (auto ammopack : ammopacks)
+        {
+            static Timer repath_timer;
+            if (!repath_timer.test_and_set(2000))
+                return true;
+        }
+        auto ammopacks  = getEntities({ ITEM_AMMO_SMALL, ITEM_AMMO_MEDIUM, ITEM_AMMO_LARGE });
+        auto dispensers = getDispensers();
+
+        auto total_ents = ammopacks;
+
+        // Add dispensers and sort list again
+        if (!dispensers.empty())
+        {
+            total_ents.reserve(ammopacks.size() + dispensers.size());
+            total_ents.insert(total_ents.end(), dispensers.begin(), dispensers.end());
+            std::sort(total_ents.begin(), total_ents.end(), [](CachedEntity *a, CachedEntity *b) { return a->m_flDistance() < b->m_flDistance(); });
+        }
+        for (auto ammopack : total_ents)
             // If we succeeed, don't try to path to other packs
-            if (navparser::NavEngine::navTo(ammopack->m_vecOrigin(), ammo))
+            if (navparser::NavEngine::navTo(ammopack->m_vecOrigin(), ammo, true, ammopack->m_vecOrigin().DistToSqr(g_pLocalPlayer->v_Origin) > 200.0f * 200.0f))
                 return true;
         ammo_cooldown.update();
     }
