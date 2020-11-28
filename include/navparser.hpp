@@ -4,6 +4,19 @@
 #include <vector>
 #include "CNavFile.h"
 
+enum Priority_list
+{
+    patrol = 5,
+    lowprio_health,
+    staynear,
+    snipe_sentry,
+    followbot,
+    ammo,
+    capture,
+    health,
+    danger,
+};
+
 namespace navparser
 {
 constexpr float PLAYER_WIDTH       = 49;

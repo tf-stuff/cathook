@@ -1,4 +1,4 @@
-﻿#include "Settings.hpp"
+#include "Settings.hpp"
 #include "init.hpp"
 #include "HookTools.hpp"
 #include "interfaces.hpp"
@@ -9,6 +9,8 @@
 #include "entitycache.hpp"
 #include "CaptureLogic.hpp"
 #include "PlayerTools.hpp"
+#include "Aimbot.hpp"
+#include "navparser.hpp"
 
 namespace hacks::tf2::NavBot
 {
@@ -16,32 +18,29 @@ static settings::Boolean enabled("navbot.enabled", "false");
 static settings::Boolean search_health("navbot.search-health", "true");
 static settings::Boolean search_ammo("navbot.search-ammo", "true");
 static settings::Boolean stay_near("navbot.stay-near", "true");
-static settings::Boolean capture_objectives("navbot.capture-objectives", "false");
+static settings::Boolean capture_objectives("navbot.capture-objectives", "true");
 static settings::Boolean snipe_sentries("navbot.snipe-sentries", "true");
 static settings::Boolean snipe_sentries_shortrange("navbot.snipe-sentries.shortrange", "false");
 static settings::Boolean escape_danger("navbot.escape-danger", "true");
 static settings::Boolean escape_danger_ctf_cap("navbot.escape-danger.ctf-cap", "false");
+static settings::Boolean enable_slight_danger_when_capping("navbot.escape-danger.slight-danger.capping", "false");
 static settings::Boolean autojump("navbot.autojump.enabled", "false");
 static settings::Boolean primary_only("navbot.primary-only", "true");
 static settings::Float jump_distance("navbot.autojump.trigger-distance", "300");
 static settings::Int blacklist_delay("navbot.proximity-blacklist.delay", "500");
+static settings::Boolean blacklist_dormat("navbot.proximity-blacklist.dormant", "false");
 static settings::Int blacklist_delay_dormat("navbot.proximity-blacklist.delay-dormant", "1000");
 static settings::Int blacklist_slightdanger_limit("navbot.proximity-blacklist.slight-danger.amount", "2");
 #if ENABLE_VISUALS
 static settings::Boolean draw_danger("navbot.draw-danger", "false");
 #endif
 
-enum Priority_list
-{
-    patrol = 5,
-    lowprio_health,
-    staynear,
-    capture,
-    snipe_sentry,
-    ammo,
-    health,
-    danger
-};
+// Allow for custom danger configs, mainly for debugging purposes
+static settings::Boolean danger_config_custom("navbot.danger-config.enabled", "false");
+static settings::Boolean danger_config_custom_prefer_far("navbot.danger-config.perfer_far", "true");
+static settings::Float danger_config_custom_min_full_danger("navbot.danger-config.min_full_danger", "300");
+static settings::Float danger_config_custom_min_slight_danger("navbot.danger-config.min_slight_danger", "500");
+static settings::Float danger_config_custom_max_slight_danger("navbot.danger-config.max_slight_danger", "3000");
 
 // Controls the bot parameters like distance from enemy
 struct bot_class_config
@@ -52,14 +51,10 @@ struct bot_class_config
     bool prefer_far;
 };
 
-// Sniper, Go close to enemy since we can oneshot him, but avoid if we have multiple
-constexpr bot_class_config CONFIG_SNIPER{ 300.0f, 800.0f, FLT_MAX, true };
-// A short range class like scout or heavy, run at the enemy
-constexpr bot_class_config CONFIG_SHORT_RANGE{ 140.0f, 400.0f, 600.0f, false };
-// A mid range class like the Soldier, don't get too close but also don't run too far away
-constexpr bot_class_config CONFIG_MID_RANGE{ 200.0f, 400.0f, 4000.0f, true };
-
-bot_class_config selected_config = CONFIG_SNIPER;
+constexpr bot_class_config CONFIG_SHORT_RANGE = { 140.0f, 400.0f, 600.0f, false };
+constexpr bot_class_config CONFIG_MID_RANGE   = { 200.0f, 500.0f, 3000.0f, true };
+constexpr bot_class_config CONFIG_LONG_RANGE  = { 300.0f, 500.0f, 4000.0f, true };
+bot_class_config selected_config              = CONFIG_MID_RANGE;
 
 static Timer health_cooldown{};
 static Timer ammo_cooldown{};
@@ -70,8 +65,8 @@ bool shouldSearchHealth(bool low_priority = false)
     if (navparser::NavEngine::current_priority > health)
         return false;
     float health_percent = LOCAL_E->m_iHealth() / (float) g_pPlayerResource->GetMaxHealth(LOCAL_E);
-    // Get health when below 65%, or below 90% and just patroling
-    return health_percent < 0.64f || (low_priority && (navparser::NavEngine::current_priority <= patrol || navparser::NavEngine::current_priority == lowprio_health) && health_percent <= 0.90f);
+    // Get health when below 65%, or below 80% and just patroling
+    return health_percent < 0.64f || (low_priority && (navparser::NavEngine::current_priority <= patrol || navparser::NavEngine::current_priority == lowprio_health) && health_percent <= 0.80f);
 }
 
 // Should we search ammo at all?
@@ -103,7 +98,7 @@ bool shouldSearchAmmo()
 }
 
 // Get entities of given itemtypes (Used for health/ammo)
-std::vector<CachedEntity *> getEntities(std::vector<k_EItemType> itemtypes)
+std::vector<CachedEntity *> getEntities(const std::vector<k_EItemType> &itemtypes)
 {
     std::vector<CachedEntity *> entities;
     for (int i = g_IEngine->GetMaxClients() + 1; i < MAX_ENTITIES; i++)
@@ -175,7 +170,6 @@ std::vector<std::pair<Vector, int>> sniper_spots;
 
 // Used for time between refreshing sniperspots
 static Timer refresh_sniperspots_timer{};
-
 void refreshSniperSpots()
 {
     if (!refresh_sniperspots_timer.test_and_set(60000))
@@ -188,7 +182,7 @@ void refreshSniperSpots()
         for (auto &hiding_spot : area.m_hidingSpots)
             // Spots actually marked for sniping
             if (hiding_spot.IsExposed() || hiding_spot.IsGoodSniperSpot() || hiding_spot.IsIdealSniperSpot())
-                sniper_spots.push_back(std::pair<Vector, int>(hiding_spot.m_pos, 0));
+                sniper_spots.emplace_back(hiding_spot.m_pos, 0);
 }
 
 #if ENABLE_VISUALS
@@ -200,7 +194,7 @@ static Timer dormant_update_timer{};
 void updateEnemyBlacklist()
 {
     bool should_run_normal  = blacklist_update_timer.test_and_set(*blacklist_delay);
-    bool should_run_dormant = dormant_update_timer.test_and_set(*blacklist_delay_dormat);
+    bool should_run_dormant = blacklist_dormat && dormant_update_timer.test_and_set(*blacklist_delay_dormat);
     // Don't run since we do not care here
     if (!should_run_dormant && !should_run_normal)
         return;
@@ -227,7 +221,7 @@ void updateEnemyBlacklist()
         // Entity is generally invalid, ignore
         if (CE_INVALID(ent) || !g_pPlayerResource->isAlive(i))
             continue;
-        // Not on our team, do not care
+        // On our team, do not care
         if (g_pPlayerResource->GetTeam(i) == g_pLocalPlayer->team)
             continue;
 
@@ -253,8 +247,8 @@ void updateEnemyBlacklist()
 
         for (auto &checked_origin : checked_origins)
         {
-            // If this origin is closer than a quarter of the min HU (or less than 100 HU) to a cached one, don't go through all nav areas again
-            // DistToSqr is much faster than DistTo which is why we use it here
+            // If this origin is closer than a quarter of the min HU (or less than 100 HU) to a cached one, don't go through
+            // all nav areas again DistToSqr is much faster than DistTo which is why we use it here
             auto distance = selected_config.min_slight_danger;
 
             distance *= 0.25f;
@@ -268,7 +262,7 @@ void updateEnemyBlacklist()
                 should_check = false;
 
                 bool is_absolute_danger = distance < selected_config.min_full_danger;
-                if (!is_absolute_danger)
+                if (!is_absolute_danger && (enable_slight_danger_when_capping || navparser::NavEngine::current_priority != capture))
                     for (auto &area : (*to_loop)[checked_origin.first])
                     {
                         (*to_mark)[area]++;
@@ -292,8 +286,8 @@ void updateEnemyBlacklist()
             // Not dangerous, Still don't bump
             if (!player_tools::shouldTarget(ent))
             {
-                slight_danger_dist   = navparser::PLAYER_WIDTH * 2.0f;
-                absolute_danger_dist = navparser::PLAYER_WIDTH * 2.0f;
+                slight_danger_dist   = navparser::PLAYER_WIDTH * 1.2f;
+                absolute_danger_dist = navparser::PLAYER_WIDTH * 1.2f;
             }
 
             // Too close to count as slight danger
@@ -304,7 +298,7 @@ void updateEnemyBlacklist()
                 (*to_loop)[ent].push_back(&nav_area);
 
                 // Just slightly dangerous, only mark as such if it's clear
-                if (!is_absolute_danger)
+                if (!is_absolute_danger && (enable_slight_danger_when_capping || navparser::NavEngine::current_priority != capture))
                 {
                     (*to_mark)[&nav_area]++;
                     if ((*to_mark)[&nav_area] < *blacklist_slightdanger_limit)
@@ -313,7 +307,7 @@ void updateEnemyBlacklist()
                 (*navparser::NavEngine::getFreeBlacklist())[&nav_area] = is_dormant ? navparser::ENEMY_DORMANT : navparser::ENEMY_NORMAL;
             }
         }
-        checked_origins.push_back(std::pair<CachedEntity *, Vector>(ent, *origin));
+        checked_origins.emplace_back(ent, *origin);
     }
 #if ENABLE_VISUALS
     if (should_run_dormant)
@@ -322,13 +316,13 @@ void updateEnemyBlacklist()
         slight_danger_drawlist_normal.clear();
 
     // Store slight danger areas for drawing
-    if (normal_slight_danger.size())
+    if (!normal_slight_danger.empty())
     {
         for (auto &area : normal_slight_danger)
             if (area.second < *blacklist_slightdanger_limit)
                 slight_danger_drawlist_normal.push_back(area.first->m_center);
     }
-    if (dormant_slight_danger.size())
+    if (!dormant_slight_danger.empty())
     {
         for (auto &area : dormant_slight_danger)
             if (area.second < *blacklist_slightdanger_limit)
@@ -342,7 +336,7 @@ bool doRoam()
 {
     static Timer fail_timer;
     // No sniper spots :shrug:
-    if (!sniper_spots.size())
+    if (sniper_spots.empty())
         return false;
     // Failed recently, wait a while
     if (!fail_timer.check(1000))
@@ -355,17 +349,17 @@ bool doRoam()
     std::sort(sniper_spots.begin(), sniper_spots.end(), [](std::pair<Vector, int> a, std::pair<Vector, int> b) { return a.first.DistTo(g_pLocalPlayer->v_Origin) < b.first.DistTo(g_pLocalPlayer->v_Origin); });
 
     bool tried_pathing = false;
-    for (int i = 0; i < sniper_spots.size(); i++)
+    for (auto &sniper_spot : sniper_spots)
     {
         // Timed out
-        if (sniper_spots[i].second > g_GlobalVars->tickcount)
+        if (sniper_spot.second > g_GlobalVars->tickcount)
             continue;
 
         tried_pathing = true;
 
         // Ignore for spot for 30s
-        sniper_spots[i].second = TICKCOUNT_TIMESTAMP(30);
-        if (navparser::NavEngine::navTo(sniper_spots[i].first, patrol))
+        sniper_spot.second = TICKCOUNT_TIMESTAMP(30);
+        if (navparser::NavEngine::navTo(sniper_spot.first, patrol))
             return true;
     }
 
@@ -461,7 +455,8 @@ bool stayNear()
     static Timer staynear_cooldown{};
     static CachedEntity *previous_target = nullptr;
 
-    // Stay near us expensive so we have to cache. We achieve this by only checking a pre-determined amount of players every CreateMove
+    // Stay near is expensive so we have to cache. We achieve this by only checking a pre-determined amount of players every
+    // CreateMove
     constexpr int MAX_STAYNEAR_CHECKS_RANGE = 3;
     constexpr int MAX_STAYNEAR_CHECKS_CLOSE = 2;
     static int lowest_check_index           = 0;
@@ -804,6 +799,10 @@ bool escapeDanger()
         if (flag_carrier == LOCAL_E)
             return false;
     }
+    // Priority too high
+    if (navparser::NavEngine::current_priority > danger)
+        return false;
+
     auto *local_nav = navparser::NavEngine::findClosestNavSquare(g_pLocalPlayer->v_Origin);
     auto blacklist  = navparser::NavEngine::getFreeBlacklist();
 
@@ -863,31 +862,34 @@ static std::pair<CachedEntity *, float> getNearestPlayerDistance()
     return { best_ent, distance };
 }
 
-static void autoJump()
-{
-    if (!autojump)
-        return;
-    static Timer last_jump{};
-    if (!last_jump.test_and_set(200))
-        return;
-
-    if (getNearestPlayerDistance().second <= *jump_distance)
-        current_user_cmd->buttons |= IN_JUMP | IN_DUCK;
-}
-
 enum slots
 {
     primary   = 1,
     secondary = 2,
     melee     = 3
 };
+
+static int slot = primary;
+static std::pair<CachedEntity *, float> nearest;
+
+static void autoJump()
+{
+    if (!autojump)
+        return;
+    static Timer last_jump{};
+    if (!last_jump.test_and_set(200) || CE_BAD(nearest.first))
+        return;
+
+    if (nearest.second <= *jump_distance)
+        current_user_cmd->buttons |= IN_JUMP | IN_DUCK;
+}
+
 static slots getBestSlot(slots active_slot)
 {
-    auto nearest = getNearestPlayerDistance();
+    nearest = getNearestPlayerDistance();
     switch (g_pLocalPlayer->clazz)
     {
     case tf_scout:
-        return primary;
     case tf_heavy:
         return primary;
     case tf_medic:
@@ -952,10 +954,9 @@ static void updateSlot()
     if (CE_GOOD(LOCAL_E) && !HasCondition<TFCond_HalloweenGhostMode>(LOCAL_E) && CE_GOOD(LOCAL_W) && LOCAL_E->m_bAlivePlayer())
     {
         IClientEntity *weapon = RAW_ENT(LOCAL_W);
-        // IsBaseCombatWeapon()
         if (re::C_BaseCombatWeapon::IsBaseCombatWeapon(weapon))
         {
-            int slot    = re::C_BaseCombatWeapon::GetSlot(weapon) + 1;
+            slot        = re::C_BaseCombatWeapon::GetSlot(weapon) + 1;
             int newslot = getBestSlot(static_cast<slots>(slot));
             if (slot != newslot)
                 g_IEngine->ClientCmd_Unrestricted(format("slot", newslot).c_str());
@@ -972,27 +973,25 @@ void CreateMove()
 
     refreshSniperSpots();
 
-    // Update the distance config
-    switch (g_pLocalPlayer->clazz)
+    if (danger_config_custom)
     {
-    case tf_scout:
-    case tf_heavy:
-        selected_config = CONFIG_SHORT_RANGE;
-        break;
-    case tf_sniper:
-    {
-        bool has_sniper = true;
-        // Using a Huntsman, use close range config
-        if (HasWeapon(LOCAL_E, 56) || HasWeapon(LOCAL_E, 1005) || HasWeapon(LOCAL_E, 1092))
-            has_sniper = false;
-        if (has_sniper)
-            selected_config = CONFIG_SNIPER;
-        else
-            selected_config = CONFIG_SHORT_RANGE;
-        break;
+        selected_config = { *danger_config_custom_min_full_danger, *danger_config_custom_min_slight_danger, *danger_config_custom_max_slight_danger, *danger_config_custom_prefer_far };
     }
-    default:
-        selected_config = CONFIG_MID_RANGE;
+    else
+    {
+        // Update the distance config
+        switch (g_pLocalPlayer->clazz)
+        {
+        case tf_scout:
+        case tf_heavy:
+            selected_config = CONFIG_SHORT_RANGE;
+            break;
+        case tf_sniper:
+            selected_config = g_pLocalPlayer->weapon()->m_iClassID() == CL_CLASS(CTFCompoundBow) ? CONFIG_MID_RANGE : CONFIG_LONG_RANGE;
+            break;
+        default:
+            selected_config = CONFIG_MID_RANGE;
+        }
     }
 
     updateSlot();
@@ -1008,11 +1007,11 @@ void CreateMove()
     // If we aren't getting health, get ammo
     else if (getAmmo())
         return;
-    // Try to snipe sentries
-    else if (snipeSentries())
-        return;
     // Try to capture objectives
     else if (captureObjectives())
+        return;
+    // Try to snipe sentries
+    else if (snipeSentries())
         return;
     // Try to stalk enemies
     else if (stayNear())
@@ -1031,6 +1030,7 @@ void LevelInit()
     refresh_sniperspots_timer.last -= std::chrono::seconds(60);
     sniper_spots.clear();
     is_doomsday = false;
+
     // Doomsday sucks
     // TODO: add proper doomsday implementation
     auto map_name = std::string(g_IEngine->GetLevelName());

@@ -39,6 +39,7 @@
             <AutoVariable width="fill" target="navbot.search-health" label="Search health"/>
             <AutoVariable width="fill" target="navbot.search-ammo" label="Search ammo"/>
             <AutoVariable width="fill" target="navbot.escape-danger" label="Escape danger"/>
+            <AutoVariable width="fill" target="navbot.escape-danger.slight-danger.capping" label="Safe capping" tooltip="Make bots run pre-emptively from capture points in case of danger"/>
             <AutoVariable width="fill" target="navbot.escape-danger.ctf-cap" label="Escape danger w. intel" tooltip="Also try to escape from danger when carrying intel."/>
             <!--AutoVariable width="fill" target="navbot.spy-mode" label="Enable Spy mode"/>
             <AutoVariable width="fill" target="navbot.other-mode" label="General mode"/-->
