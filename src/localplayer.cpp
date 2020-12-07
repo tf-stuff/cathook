@@ -165,6 +165,11 @@ void LocalPlayer::Update()
     }
 }
 
+void LocalPlayer::UpdateEye()
+{
+    v_Eye = entity->m_vecOrigin() + CE_VECTOR(entity, netvar.vViewOffset);
+}
+
 void LocalPlayer::UpdateEnd()
 {
     if (!isFakeAngleCM)

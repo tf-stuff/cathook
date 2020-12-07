@@ -1034,7 +1034,7 @@ static CatCommand nav_debug_blacklist("nav_debug_blacklist", "Blacklist connecti
 });
 
 static InitRoutine init([]() {
-    EC::Register(EC::CreateMove, NavEngine::CreateMove, "navengine_cm");
+    EC::Register(EC::CreateMove_NoEnginePred, NavEngine::CreateMove, "navengine_cm");
     EC::Register(EC::LevelInit, NavEngine::LevelInit, "navengine_levelinit");
 #if ENABLE_VISUALS
     EC::Register(EC::Draw, NavEngine::Draw, "navengine_draw");

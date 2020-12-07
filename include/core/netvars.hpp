@@ -221,6 +221,7 @@ public:
     offset_t m_iPlayerIndex;
     offset_t m_hTargetPlayer;
     offset_t m_flResetTime;
+    offset_t m_flMaxspeed;
 };
 
 extern NetVars netvar;
