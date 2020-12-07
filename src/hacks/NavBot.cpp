@@ -1099,14 +1099,12 @@ void Draw()
     for (auto &area : slight_danger_drawlist_normal)
     {
         Vector out;
-
         if (draw::WorldToScreen(area, out))
             draw::Rectangle(out.x - 2.0f, out.y - 2.0f, 4.0f, 4.0f, colors::orange);
     }
     for (auto &area : slight_danger_drawlist_dormant)
     {
         Vector out;
-
         if (draw::WorldToScreen(area, out))
             draw::Rectangle(out.x - 2.0f, out.y - 2.0f, 4.0f, 4.0f, colors::orange);
     }
@@ -1122,6 +1120,7 @@ void Draw()
 
 static InitRoutine init([]() {
     EC::Register(EC::CreateMove, CreateMove, "navbot_cm");
+    EC::Register(EC::CreateMoveWarp, CreateMove, "navbot_cm");
     EC::Register(EC::LevelInit, LevelInit, "navbot_levelinit");
 #if ENABLE_VISUALS
     EC::Register(EC::Draw, Draw, "navbot_draw");
