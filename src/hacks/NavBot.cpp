@@ -473,6 +473,106 @@ bool isStayNearTargetValid(CachedEntity *ent)
     return CE_VALID(ent) && g_pPlayerResource->isAlive(ent->m_IDX) && ent->m_IDX != g_pLocalPlayer->entity_idx && g_pLocalPlayer->team != ent->m_iTeam() && player_tools::shouldTarget(ent) && !IsPlayerInvisible(ent) && !IsPlayerInvulnerable(ent);
 }
 
+// Recursive function to find hiding spot
+std::optional<std::pair<CNavArea *, int>> findClosestHidingSpot(CNavArea *area, Vector vischeck_point, int recursion_count, int index = 0)
+{
+    static std::vector<CNavArea *> already_recursed;
+    if (index == 0)
+        already_recursed.clear();
+    Vector area_origin = area->m_center;
+    area_origin.z += navparser::PLAYER_JUMP_HEIGHT;
+
+    // Increment recursion index
+    index++;
+
+    // If the area works, return it
+    if (!IsVectorVisibleNavigation(area_origin, vischeck_point))
+        return std::pair<CNavArea *, int>{ area, index - 1 };
+
+    // Termination condition not hit yet
+    else if (index != recursion_count)
+    {
+        // Store the nearest area
+        std::optional<std::pair<CNavArea *, int>> best_area = std::nullopt;
+
+        for (auto &connection : area->m_connections)
+        {
+            if (std::find(already_recursed.begin(), already_recursed.end(), connection.area) != already_recursed.end())
+                continue;
+            already_recursed.push_back(connection.area);
+            auto area = findClosestHidingSpot(connection.area, vischeck_point, recursion_count, index);
+            if (area && (!best_area || area->second < best_area->second))
+                best_area = { area->first, area->second };
+        }
+        return best_area;
+    }
+    else
+        return std::nullopt;
+}
+
+// Try to avoid enemy sightlines and reload in peace
+bool runReload()
+{
+    PROF_SECTION(runReload)
+    static Timer reloadrun_cooldown{};
+
+    // Not reloading, do not run
+    if (!(CE_GOOD(LOCAL_E) && !HasCondition<TFCond_HalloweenGhostMode>(LOCAL_E) && CE_GOOD(LOCAL_W) && re::C_BaseCombatWeapon::GetSlot(RAW_ENT(LOCAL_W)) + 1 != melee && !CanShoot()))
+        return false;
+
+    if (!stay_near)
+        return false;
+
+    // Re-calc only every once in a while
+    if (!reloadrun_cooldown.test_and_set(1000))
+        return navparser::NavEngine::current_priority == run_reload;
+
+    // Too high priority, so don't try
+    if (navparser::NavEngine::current_priority > run_reload)
+        return false;
+
+    // Get our area and start recursing the neighbours
+    CNavArea *local_area = navparser::NavEngine::findClosestNavSquare(g_pLocalPlayer->v_Origin);
+    if (!local_area)
+        return false;
+
+    // Get closest enemy to vicheck
+    CachedEntity *closest_visible_enemy = nullptr;
+    float best_distance                 = FLT_MAX;
+    for (int i = 1; i <= g_IEngine->GetMaxClients(); i++)
+    {
+        CachedEntity *ent = ENTITY(i);
+        if (CE_BAD(ent) || !ent->m_bAlivePlayer() || !ent->m_bEnemy())
+            continue;
+        if (ent->m_flDistance() > best_distance)
+            continue;
+        if (!ent->IsVisible())
+            continue;
+        if (!player_tools::shouldTarget(ent))
+            continue;
+
+        best_distance         = ent->m_flDistance();
+        closest_visible_enemy = ent;
+    }
+
+    if (!closest_visible_enemy)
+        return false;
+
+    Vector vischeck_point = closest_visible_enemy->m_vecOrigin();
+    vischeck_point.z += navparser::PLAYER_JUMP_HEIGHT;
+
+    // Get the best non visible area
+    auto best_area = findClosestHidingSpot(local_area, vischeck_point, 5);
+    if (!best_area)
+        return false;
+
+    // If we can, path
+    if (navparser::NavEngine::navTo((*best_area).first->m_center, run_reload, true, false, false))
+        return true;
+    else
+        return false;
+}
+
 // Try to stay near enemies and stalk them (or in case of sniper, try to stay far from them
 // and snipe them)
 bool stayNear()
@@ -1169,6 +1269,9 @@ void CreateMove()
         return;
     // Try to snipe sentries
     else if (snipeSentries())
+        return;
+    // Try to hide if reloading
+    else if (runReload())
         return;
     // Try to stalk enemies
     else if (stayNear())
