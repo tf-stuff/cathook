@@ -10,7 +10,6 @@
 #include <hacks/AntiAim.hpp>
 
 #include "common.hpp"
-
 namespace hacks::shared::antiaim
 {
 bool force_fakelag = false;
@@ -42,6 +41,9 @@ float aaaa_timer_start = 0.0f;
 float aaaa_timer       = 0.0f;
 int aaaa_stage         = 0;
 bool aaaa_key_pressed  = false;
+
+int grapplinghook_ts;
+bool using_grapple;
 
 float GetAAAAPitch()
 {
@@ -199,6 +201,24 @@ void SetSafeSpace(int safespace)
         safe_space = safespace;
 }
 
+/* checks if action slot is being used */
+void SendNetMessage(INetMessage &msg)
+{
+    if (!enable)
+        return;
+
+    auto name = ((KeyValues *) (((unsigned *) &msg)[4]))->GetName();
+
+    /* if we would do setsafespace in here and not check the weapon it could be the noise maker spam too */
+    if (!strcmp(name, "+use_action_slot_item_server"))
+        using_grapple = true;
+
+    if (!strcmp(name, "-use_action_slot_item_server"))
+        using_grapple = false;
+
+    grapplinghook_ts = tickcount;
+}
+
 bool ShouldAA(CUserCmd *cmd)
 {
     if (hacks::tf2::antibackstab::noaa)
@@ -213,6 +233,20 @@ bool ShouldAA(CUserCmd *cmd)
     }
     if ((cmd->buttons & IN_ATTACK2) && classid == CL_CLASS(CTFLunchBox))
         return false;
+    if (((cmd->buttons & IN_ATTACK) && classid == CL_CLASS(CTFGrapplingHook)) || (using_grapple && HasWeapon(LOCAL_E, 1152)))
+    {
+        /* disable if under 2 ticks */
+        if (tickcount - grapplinghook_ts <= 2)
+        {
+            return true;
+        }
+        return true;
+    }
+    else
+    {
+        /* we havent used the grappling hook yet */
+        grapplinghook_ts = tickcount;
+    }
     switch (mode)
     {
     case weapon_projectile:
