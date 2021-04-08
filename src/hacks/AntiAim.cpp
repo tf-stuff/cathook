@@ -10,6 +10,10 @@
 #include <hacks/AntiAim.hpp>
 
 #include "common.hpp"
+#include "entitycache.hpp"
+#include "in_buttons.h"
+#include "interfaces.hpp"
+#include "localplayer.hpp"
 namespace hacks::shared::antiaim
 {
 bool force_fakelag = false;
@@ -209,14 +213,12 @@ void SendNetMessage(INetMessage &msg)
 
     auto name = ((KeyValues *) (((unsigned *) &msg)[4]))->GetName();
 
-    /* if we would do setsafespace in here and not check the weapon it could be the noise maker spam too */
-    if (!strcmp(name, "+use_action_slot_item_server"))
-        using_grapple = true;
+    if (CE_BAD(LOCAL_E))
+        return;
 
-    if (!strcmp(name, "-use_action_slot_item_server"))
-        using_grapple = false;
-
-    grapplinghook_ts = tickcount;
+    /* checks if action slot has been used & grapple is equipped */
+    if (!strcmp(name, "+use_action_slot_item_server") && HasWeapon(LOCAL_E, 1152))
+        SetSafeSpace(2);
 }
 
 bool ShouldAA(CUserCmd *cmd)
@@ -233,19 +235,9 @@ bool ShouldAA(CUserCmd *cmd)
     }
     if ((cmd->buttons & IN_ATTACK2) && classid == CL_CLASS(CTFLunchBox))
         return false;
-    if (((cmd->buttons & IN_ATTACK) && classid == CL_CLASS(CTFGrapplingHook)) || (using_grapple && HasWeapon(LOCAL_E, 1152)))
+    if ((cmd->buttons & IN_ATTACK) && classid == CL_CLASS(CTFGrapplingHook) || (cmd->buttons & IN_ATTACK != g_pLocalPlayer->bAttackLastTick))
     {
-        /* disable if under 2 ticks */
-        if (tickcount - grapplinghook_ts <= 2)
-        {
-            return true;
-        }
-        return true;
-    }
-    else
-    {
-        /* we havent used the grappling hook yet */
-        grapplinghook_ts = tickcount;
+        SetSafeSpace(2);
     }
     switch (mode)
     {
