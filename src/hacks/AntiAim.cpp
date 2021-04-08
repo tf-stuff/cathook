@@ -10,10 +10,6 @@
 #include <hacks/AntiAim.hpp>
 
 #include "common.hpp"
-#include "entitycache.hpp"
-#include "in_buttons.h"
-#include "interfaces.hpp"
-#include "localplayer.hpp"
 namespace hacks::shared::antiaim
 {
 bool force_fakelag = false;
