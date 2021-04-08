@@ -46,9 +46,6 @@ float aaaa_timer       = 0.0f;
 int aaaa_stage         = 0;
 bool aaaa_key_pressed  = false;
 
-int grapplinghook_ts;
-bool using_grapple;
-
 float GetAAAAPitch()
 {
     switch ((int) aaaa_mode)
