@@ -560,7 +560,7 @@ void _FASTCALL ProcessEntityPT(CachedEntity *ent)
     {
 
         // Logic for using the enum to sort out snipers
-        if ((int) sightlines == 2 || ((int) sightlines == 1 && CE_INT(ent, netvar.iClass) == tf_sniper))
+        if (((int) sightlines == 2 || ((int) sightlines == 1 && CE_INT(ent, netvar.iClass) == tf_sniper)) && CE_GOOD(ent) && ent->hitboxes.GetHitbox(0))
         {
             PROF_SECTION(PT_esp_sightlines);
 
@@ -1994,12 +1994,14 @@ void SetEntityColor(CachedEntity *entity, const rgba_t &color)
     data[entity->m_IDX].color = color;
 }
 
-static InitRoutine init([]() {
-    EC::Register(EC::CreateMove, cm, "cm_esp", EC::average);
+static InitRoutine init(
+    []()
+    {
+        EC::Register(EC::CreateMove, cm, "cm_esp", EC::average);
 #if ENABLE_VISUALS
-    EC::Register(EC::Draw, Draw, "draw_esp", EC::average);
-    Init();
+        EC::Register(EC::Draw, Draw, "draw_esp", EC::average);
+        Init();
 #endif
-});
+    });
 
 } // namespace hacks::shared::esp
