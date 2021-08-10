@@ -67,6 +67,8 @@ static Timer ammo_cooldown{};
 // Should we search health at all?
 bool shouldSearchHealth(bool low_priority = false)
 {
+    if (!search_health)
+        return false;
     // Check if being gradually healed in any way
     if (HasCondition<TFCond_Healing>(LOCAL_E))
         return false;
@@ -82,13 +84,15 @@ bool shouldSearchHealth(bool low_priority = false)
 // Should we search ammo at all?
 bool shouldSearchAmmo()
 {
+    if (!search_ammo)
+        return false;
     if (CE_BAD(LOCAL_W))
         return false;
     // Priority too high
     if (navparser::NavEngine::current_priority > ammo)
         return false;
 
-    int *weapon_list = (int *) ((uint64_t)(RAW_ENT(LOCAL_E)) + netvar.hMyWeapons);
+    int *weapon_list = (int *) ((uint64_t) (RAW_ENT(LOCAL_E)) + netvar.hMyWeapons);
     if (!weapon_list)
         return false;
     if (g_pLocalPlayer->holding_sniper_rifle && CE_INT(LOCAL_E, netvar.m_iAmmo + 4) <= 5)
@@ -192,6 +196,7 @@ bool getHealth(bool low_priority = false)
     return false;
 }
 
+static bool was_force = false;
 // Find ammo if needed
 bool getAmmo(bool force = false)
 {
@@ -206,6 +211,8 @@ bool getAmmo(bool force = false)
             if (!repath_timer.test_and_set(2000))
                 return true;
         }
+        else
+            was_force = false;
         auto ammopacks  = getEntities({ ITEM_AMMO_SMALL, ITEM_AMMO_MEDIUM, ITEM_AMMO_LARGE });
         auto dispensers = getDispensers();
 
@@ -221,10 +228,13 @@ bool getAmmo(bool force = false)
         for (auto ammopack : total_ents)
             // If we succeeed, don't try to path to other packs
             if (navparser::NavEngine::navTo(ammopack->m_vecOrigin(), ammo, true, ammopack->m_vecOrigin().DistToSqr(g_pLocalPlayer->v_Origin) > 200.0f * 200.0f))
+            {
+                was_force = force;
                 return true;
+            }
         ammo_cooldown.update();
     }
-    else if (navparser::NavEngine::current_priority == ammo)
+    else if (navparser::NavEngine::current_priority == ammo && !was_force)
         navparser::NavEngine::cancelPath();
     return false;
 }
@@ -293,7 +303,7 @@ void refreshBuildingSpots(bool force = false)
 {
     if (!isEngieMode())
         return;
-    if (force || refresh_buildingspots_timer.test_and_set(5000))
+    if (force || refresh_buildingspots_timer.test_and_set(HasGunslinger(LOCAL_E) ? 1000 : 5000))
     {
         building_spots.clear();
         std::optional<Vector> target;
@@ -306,6 +316,8 @@ void refreshBuildingSpots(bool force = false)
             auto nearest = getNearestPlayerDistance();
             if (CE_GOOD(nearest.first))
                 target = *nearest.first->m_vecDormantOrigin();
+            if (!target)
+                target = LOCAL_E->m_vecOrigin();
         }
         if (target)
         {
@@ -330,7 +342,30 @@ void refreshBuildingSpots(bool force = false)
             }
             // Sort by distance to nearest, lower is better
             // TODO: This isnt really optimal, need a dif way to where it is a good distance from enemies but also bots dont build in the same spot
-            std::sort(building_spots.begin(), building_spots.end(), [target](Vector a, Vector b) { return a.DistTo(*target) < b.DistTo(*target); });
+            std::sort(building_spots.begin(), building_spots.end(),
+                      [target](Vector a, Vector b)
+                      {
+                          if (!HasGunslinger(LOCAL_E))
+                          {
+                              auto a_dist = a.DistTo(*target);
+                              auto b_dist = b.DistTo(*target);
+
+                              // Penalty for being in danger ranges
+                              if (a_dist + 100.0f < selected_config.min_full_danger)
+                                  a_dist += 4000.0f;
+                              if (b_dist + 100.0f < selected_config.min_full_danger)
+                                  b_dist += 4000.0f;
+
+                              if (a_dist + 1000.0f < selected_config.min_slight_danger)
+                                  a_dist += 1500.0f;
+                              if (b_dist + 1000.0f < selected_config.min_slight_danger)
+                                  b_dist += 1500.0f;
+
+                              return a_dist < b_dist;
+                          }
+                          else
+                              return a.DistTo(*target) < b.DistTo(*target);
+                      });
         }
     }
 }
@@ -377,6 +412,9 @@ static bool navToSentrySpot()
     // Try to nav to our existing sentry spot
     if (CE_GOOD(mySentry) && mySentry->m_bAlivePlayer() && mySentry->m_vecDormantOrigin())
     {
+        // Don't overwrite current nav
+        if (navparser::NavEngine::current_priority == engineer)
+            return true;
         if (navparser::NavEngine::navTo(*mySentry->m_vecDormantOrigin(), engineer))
             return true;
     }
@@ -392,12 +430,21 @@ static bool navToSentrySpot()
     // Max 10 attempts
     for (int attempts = 0; attempts < 10 && attempts < building_spots.size(); ++attempts)
     {
-        // Get a random building spot
-        auto random = select_randomly(building_spots.begin(), building_spots.end());
+        // Get a semi-random building spot to still keep distance preferrance
+        auto random_offset = RandomInt(0, std::min(3, (int) building_spots.size()));
+
+        Vector random;
+
+        // Wrap around
+        if (attempts - random_offset < 0)
+            random = building_spots[building_spots.size() + (attempts - random_offset)];
+        else
+            random = building_spots[attempts - random_offset];
+
         // Try to nav there
-        if (navparser::NavEngine::navTo(*random, engineer))
+        if (navparser::NavEngine::navTo(random, engineer))
         {
-            current_building_spot = *random;
+            current_building_spot = random;
             return true;
         }
     }
@@ -938,7 +985,7 @@ static bool buildBuilding(int building)
         return getAmmo(true);
 
     // Try to build! we are close enough
-    if (current_building_spot.IsValid() && current_building_spot.DistTo(g_pLocalPlayer->v_Origin) <= 200.0f)
+    if (current_building_spot.IsValid() && current_building_spot.DistTo(g_pLocalPlayer->v_Origin) <= (building == dispenser ? 500.0f : 200.0f))
     {
         // TODO: Rotate our angle to a valid building spot ? also rotate building itself to face enemies ?
         current_user_cmd->viewangles.x = 20.0f;
@@ -1003,7 +1050,7 @@ static bool smackBuilding(CachedEntity *ent)
         AimAt(g_pLocalPlayer->v_Eye, GetBuildingPosition(ent), current_user_cmd);
         current_user_cmd->buttons |= IN_ATTACK;
     }
-    else
+    else if (navparser::NavEngine::current_priority != engineer)
         return navparser::NavEngine::navTo(*ent->m_vecDormantOrigin(), engineer);
     return true;
 }
@@ -1228,7 +1275,7 @@ bool doRoam()
             navparser::NavEngine::cancelPath();
             return true;
         }
-        if (navparser::NavEngine::navTo(*target, patrol))
+        if (navparser::NavEngine::navTo(*target, patrol, true, navparser::NavEngine::current_priority != patrol))
             return true;
     }
 
@@ -1270,9 +1317,12 @@ bool escapeDanger()
     auto *local_nav = navparser::NavEngine::findClosestNavSquare(g_pLocalPlayer->v_Origin);
     auto blacklist  = navparser::NavEngine::getFreeBlacklist();
 
-    // In danger, try to run
+    // In danger, try to run (besides if it's a building spot, don't run away from that)
     if (blacklist->find(local_nav) != blacklist->end())
     {
+        if ((*blacklist)[local_nav].value == navparser::BlacklistReason_enum::BAD_BUILDING_SPOT)
+            return false;
+
         static CNavArea *target_area = nullptr;
         // Already running and our target is still valid
         if (navparser::NavEngine::current_priority == danger && blacklist->find(target_area) == blacklist->end())
@@ -1377,9 +1427,9 @@ static slots getBestSlot(slots active_slot, std::pair<CachedEntity *, float> &ne
     }
     case tf_engineer:
     {
-        if (((CE_GOOD(mySentry) && mySentry->m_flDistance() <= 300) || (CE_GOOD(myDispenser) && myDispenser->m_flDistance() <= 300)) || (current_building_spot.IsValid() && current_building_spot.DistTo(g_pLocalPlayer->v_Origin) <= 300.0f))
+        if (((CE_GOOD(mySentry) && mySentry->m_flDistance() <= 300) || (CE_GOOD(myDispenser) && myDispenser->m_flDistance() <= 500)) || (current_building_spot.IsValid() && current_building_spot.DistTo(g_pLocalPlayer->v_Origin) <= 500.0f))
         {
-            if (active_slot >= melee)
+            if (active_slot >= melee && navparser::NavEngine::current_priority != prio_melee)
                 return active_slot;
             else
                 return melee;
@@ -1531,14 +1581,16 @@ void Draw()
 }
 #endif
 
-static InitRoutine init([]() {
-    EC::Register(EC::CreateMove, CreateMove, "navbot_cm");
-    EC::Register(EC::CreateMoveWarp, CreateMove, "navbot_cm");
-    EC::Register(EC::LevelInit, LevelInit, "navbot_levelinit");
+static InitRoutine init(
+    []()
+    {
+        EC::Register(EC::CreateMove, CreateMove, "navbot_cm");
+        EC::Register(EC::CreateMoveWarp, CreateMove, "navbot_cm");
+        EC::Register(EC::LevelInit, LevelInit, "navbot_levelinit");
 #if ENABLE_VISUALS
-    EC::Register(EC::Draw, Draw, "navbot_draw");
+        EC::Register(EC::Draw, Draw, "navbot_draw");
 #endif
-    LevelInit();
-});
+        LevelInit();
+    });
 
 } // namespace hacks::tf2::NavBot

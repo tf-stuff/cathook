@@ -16,8 +16,8 @@ enum Priority_list
     followbot,
     ammo,
     capture,
-    engineer,
     prio_melee,
+    engineer,
     health,
     danger,
 };
