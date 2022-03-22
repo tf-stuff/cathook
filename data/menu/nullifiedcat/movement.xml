@@ -3,16 +3,16 @@
         <List width="150">
             <AutoVariable width="fill" target="bunnyhop.enable" label="Enable bunny hop"/>
             <AutoVariable width="fill" target="bunnyhop.chance" label="Bhop chance" tooltip="% chance of a successful bunnyhop."/>
-            <LabeledObject width="fill" label="Auto strafe">
+            <!--<LabeledObject width="fill" label="Auto strafe">
                 <Select target="misc.autostrafe">
                     <Option name="Off" value="0"/>
                     <Option name="Regular" value="1"/>
                     <Option name="Multidir" value="2"/>
                 </Select>
-            </LabeledObject>
+			</LabeledObject>-->
         </List>
     </Box>
-    <Box padding="12 6 6 6" width="content" height="content" name="FollowBot" x="170">
+    <!--<Box padding="12 6 6 6" width="content" height="content" name="FollowBot" x="170">
         <List width="180">
             <AutoVariable width="fill" target="follow-bot.enable" label="Enable FollowBot" tooltip="Automatically follow other players"/>
             <AutoVariable width="fill" target="follow-bot.roaming" label="Roaming" tooltip="Look for someone to follow when there is not active target."/>
@@ -64,8 +64,8 @@
             <AutoVariable width="fill" target="navbot.snipe-sentries.shortrange" label="Scout/Pyro sentry mode" tooltip="Try to target sentries as scout/pyro aswell. Usually not recommended."/>
             <AutoVariable width="fill" target="navbot.stay-near" label="Stalk enemies" tooltip="Try to outrange as sniper and close distance as scout/heavy"/>
             <!-- <!AutoVariable width="fill" target="navbot.take-teleporters" label="take teleporters"/> -->
-        </List>
-    </Box>
+    <!--    </List>
+	</Box>
     <Box padding="12 6 6 6" width="content" height="content" name="Anti-backstab" x="170" y="300">
         <List width="180">
             <AutoVariable width="fill" target="antibackstab.enable" label="Enable anti-backstab"/>
@@ -87,5 +87,5 @@
             <AutoVariable width="fill" target="misc.roll-speedhack" label="Moonwalk" tooltip="Increase crouched movement speed."/>
             <AutoVariable width="fill" target="misc.roll-speedhack.forward" label="Moonwalk forwards"/>
         </List>
-    </Box>
+			</Box>-->
 </Tab>

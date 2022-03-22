@@ -5,7 +5,7 @@
             <AutoVariable width="fill" target="remove.zoom" label="Apply if zoomed"/>
         </List>
     </Box>
-    <Box padding="12 6 6 6" width="content" height="content" name="Freecam" y="55">
+    <!--<Box padding="12 6 6 6" width="content" height="content" name="Freecam" y="55">
         <List width="180">
             <AutoVariable width="fill" target="visual.freecam-button" label="Freecam button" tooltip="Press this button to toggle freecam."/>
             <AutoVariable width="fill" target="visual.freecam-speed" label="Freecam speed (HU/s)"/>
@@ -18,7 +18,7 @@
             <AutoVariable width="fill" target="visual.thirdperson.real-angles" label="Show angles in thirdperson" tooltip="Show real antiaim angles in third person."/>
             <AutoVariable width="fill" target="visual.thirdperson.disable-zoomed" label="Disable when zoomed" tooltip="Disables thirdperson when zoomed in."/>
         </List>
-    </Box>
+		</Box>-->
     <Box padding="12 6 6 6" width="content" height="content" name="Zooming" y="190">
         <List width="180">
             <AutoVariable width="fill" target="visual.zoom-key" label="Zoom key" tooltip="Hold down this key to override your FOV to the one set below."/>
@@ -28,12 +28,12 @@
     <Box padding="12 6 6 6" width="content" height="content" name="Remove" x="195">
         <List width="180">
             <AutoVariable width="fill" target="remove.arms" label="Remove arms"/>
-            <AutoVariable width="fill" target="remove.cloak" label="Remove cloak"/>
-            <AutoVariable width="fill" target="remove.disguise" label="Remove disguise"/>
+            <!--<AutoVariable width="fill" target="remove.cloak" label="Remove cloak"/>
+			<AutoVariable width="fill" target="remove.disguise" label="Remove disguise"/>-->
             <AutoVariable width="fill" target="remove.taunts" label="Remove taunts"/>
             <AutoVariable width="fill" target="remove.hats" label="Remove hats"/>
             <AutoVariable width="fill" target="remove.contracker" label="Remove contracker"/>
-            <AutoVariable width="fill" target="remove.scope" label="Remove scope"/>
+			<AutoVariable width="fill" target="remove.scope" label="Remove scope"/>
             <AutoVariable width="fill" target="remove.zoom" label="Remove zoom/keep rifle" tooltip="Disables scope zoom and keeps the sniper rifle. Enabling Remove scope as well will set zoom_sensitivity_ratio to 4 when zooming in."/>
         </List>
     </Box>

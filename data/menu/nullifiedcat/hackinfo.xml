@@ -3,7 +3,7 @@
         <List width="200">
             <AutoVariable width="fill" target="misc.debug-info" label="Debug"/>
             <AutoVariable width="fill" target="hack.log-console" label="Log debug info"/>
-            <AutoVariable width="fill" target="debug.engine-pred-others" label="Engine pred others"/>
+            <!--<AutoVariable width="fill" target="debug.engine-pred-others" label="Engine pred others"/>
             <AutoVariable width="fill" target="debug.fast-vischeck" label="Fast vischeck"/>
             <AutoVariable width="fill" target="debug.join-wait-time" label="Joinspam wait time"/>
             <AutoVariable width="fill" target="debug.log-dispatch-user-msg" label="Log dispatched user messages"/>
@@ -15,7 +15,7 @@
             <AutoVariable width="fill" target="debug.ve.averaging" label="VE averaging"/>
             <AutoVariable width="fill" target="debug.ve.smooth" label="VE smooth"/>
             <AutoVariable width="fill" target="debug.ve.window" label="VE window"/>
-            <AutoVariable width="fill" target="aimbot.debug" label="Debug aimbot"/>
+			<AutoVariable width="fill" target="aimbot.debug" label="Debug aimbot"/>-->
         </List>
     </Box>
     <Box height="content" width="content" padding="12 6 6 6" name="Cathook" x="215">

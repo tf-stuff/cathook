@@ -48,7 +48,7 @@ static settings::Boolean pipes{ "chams.show.pipes", "true" };
 static settings::Boolean pipes_local{ "chams.show.pipes.local", "true" };
 static settings::Boolean teammate_buildings{ "chams.show.teammate-buildings", "false" };
 static settings::Boolean recursive{ "chams.recursive", "true" };
-static settings::Boolean legit{ "chams.legit", "false" };
+static settings::Boolean legit{ "chams.legit", "true" };
 static settings::Boolean singlepass{ "chams.single-pass", "false" };
 static settings::Boolean chamsself{ "chams.self", "true" };
 static settings::Boolean weapons{ "chams.weapons", "false" };
