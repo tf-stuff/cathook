@@ -29,6 +29,8 @@ static settings::Boolean info_text_min{ "hack-info.minimal", "false" };
 static settings::Boolean info_text_rainbow{ "hack-info.rainbow", "true" };
 static settings::Rgba info_text_color{ "hack-info.color", "ffffffff" };
 
+rgba_t hackinfocolor   = *info_text_color;
+
 void render_cheat_visuals()
 {
     {
@@ -85,12 +87,12 @@ void DrawCheatVisuals()
 			{
 				auto color = colors::RainbowCurrent();
 				color.a    = 1.0f;
+				AddSideString("cathook by nullworks", color);
 			}
 			else
 			{
-				auto color = info_text_color;
+				AddSideString("cathook by nullworks", hackinfocolor);
 			}
-            AddSideString("cathook by nullworks", color);
             if (!info_text_min)
             {
                 AddSideString(hack::GetVersion(),
