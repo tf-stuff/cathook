@@ -5,8 +5,8 @@
             <AutoVariable width="fill" target="misc.auto-abandon" label="Enable auto abandon"/>
 			<AutoVariable width="fill" target="misc.auto-balance-spam" label="Enable auto balance spam"/>-->
             <AutoVariable width="fill" target="misc.die-if-vac" label="Crash on VAC"/>
-            <AutoVariable width="fill" target="misc.disconnect-reason" label="Disconnect reason"/>
-            <!--<AutoVariable width="fill" target="misc.engine-prediction" label="Engine prediction"/>
+            <!--<AutoVariable width="fill" target="misc.disconnect-reason" label="Disconnect reason"/>
+            <AutoVariable width="fill" target="misc.engine-prediction" label="Engine prediction"/>
 			<AutoVariable width="fill" target="misc.flashlight-spam" label="Flashlight spam" tooltip="Used in Half Life Death Match."/>-->
             <AutoVariable width="fill" target="misc.force-halloween" label="Force halloween"/>
             <!--<AutoVariable width="fill" target="misc.no-lerp" label="Nolerp"/>
