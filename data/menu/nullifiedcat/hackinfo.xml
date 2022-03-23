@@ -23,6 +23,8 @@
 			<!--<AutoVariable width="fill" target="hack.enable" label="Enable Cathook" tooltip="WARNING: Advanced users only."/>-->
             <AutoVariable width="fill" target="hack-info.enable" label="Enable Cathook label" tooltip="Controls text at top left of screen."/>
             <AutoVariable width="fill" target="hack-info.minimal" label="Minimal Cathook label" tooltip="Only show the rainbow text in the label."/>
+			<AutoVariable width="fill" target="hack-info.rainbow" label="Cathook rainbow color toggle"/>
+            <AutoVariable width="fill" target="hack-info.color" label="Cathook label color"/>
         </List>
     </Box>
 </Tab>
