@@ -36,7 +36,7 @@ static settings::Boolean render_original{ "chams.original", "false" };
 /* Cham target rvars */
 static settings::Boolean health{ "chams.health", "false" };
 static settings::Boolean aimbot_color{ "chams.aimbot.color", "true" };
-static settings::Boolean teammates{ "chams.show.teammates", "false" };
+static settings::Boolean teammates{ "chams.show.teammates", "true" };
 static settings::Boolean disguised{ "chams.show.disguised", "true" };
 static settings::Boolean players{ "chams.show.players", "true" };
 static settings::Boolean medkits{ "chams.show.medkits", "false" };
@@ -120,7 +120,7 @@ static settings::Rgba chams_overlay_color_red_novis{ "chams.novis.overlay.overla
 static settings::Boolean arms_chams{ "chams.arms", "false" };
 static settings::Boolean arm_chams_original{ "chams.arms.original", "false" };
 static settings::Boolean arms_chams_team_color{ "chams.arms.team-colors", "true" };
-static settings::Boolean arms_chams_wireframe{ "chams.arms.wireframe", "false" };
+static settings::Boolean arms_chams_wireframe{ "chams.arms.wireframe", "true" };
 static settings::Boolean arm_chams_overlay_chams{ "chams.overlay.arms", "true" };
 static settings::Rgba arm_overlaychams_color{ "chams.arms.overlaycolor", "000000ff" };
 static settings::Rgba arm_basechams_color{ "chams.arms.basecolor", "00000055" };
@@ -129,7 +129,7 @@ static settings::Rgba arm_basechams_color{ "chams.arms.basecolor", "00000055" };
 static settings::Boolean local_weapon_chams{ "chams.local-weapon", "false" };
 static settings::Boolean local_weapon_chams_original{ "chams.local-weapon.original", "false" };
 static settings::Boolean local_weapon_chams_team_color{ "chams.local-weapon.team-colors", "true" };
-static settings::Boolean local_weapon_chams_wireframe{ "chams.local-weapon.wireframe", "false" };
+static settings::Boolean local_weapon_chams_wireframe{ "chams.local-weapon.wireframe", "true" };
 static settings::Boolean local_weapon_chams_overlay_chams{ "chams.overlay.local-weapon", "true" };
 static settings::Rgba local_weapon_overlaychams_color{ "chams.local-weapon.overlaycolor", "000000ff" };
 static settings::Rgba local_weapon_basechams_color{ "chams.local-weapon.basecolor", "000000ff" };
