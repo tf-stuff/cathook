@@ -84,7 +84,7 @@ void DrawCheatVisuals()
 			color.a    = 1.0f;
 			if (!info_text_rainbow)
 			{
-				color = hackinfocolor;
+				color = colors::hackinfocolor;
 			}
 			AddSideString("cathook by nullworks", color);
             if (!info_text_min)

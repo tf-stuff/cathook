@@ -127,6 +127,7 @@ extern rgba_t red_u; // Ubercharge
 extern rgba_t blu_u;  // Ubercharge
 extern rgba_t gui;    // GUI color
 extern rgba_t target; // Aimbot target color
+extern rgba_t hackinfocolor;
 constexpr rgba_t red_s  = FromRGBA8(237, 42, 42, 255); // Not user controlled
 constexpr rgba_t yellow = FromRGBA8(255, 255, 0, 255);
 constexpr rgba_t orange = FromRGBA8(255, 120, 0, 255);
