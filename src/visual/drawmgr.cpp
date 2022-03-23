@@ -27,9 +27,6 @@
 static settings::Boolean info_text{ "hack-info.enable", "true" };
 static settings::Boolean info_text_min{ "hack-info.minimal", "false" };
 static settings::Boolean info_text_rainbow{ "hack-info.rainbow", "true" };
-static settings::Rgba info_text_color{ "hack-info.color", "ffffffff" };
-
-rgba_t hackinfocolor   = *info_text_color;
 
 void render_cheat_visuals()
 {

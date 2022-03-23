@@ -20,6 +20,7 @@ settings::Rgba col_red_u{ "colors.team-red.ubercharge", "ff6600ff" };
 settings::Rgba col_blu_u{ "colors.team-blu.ubercharge", "003399ff" };
 settings::Rgba col_guicolor{ "colors.guicolor", "ffffffff" };
 settings::Rgba col_target{ "colors.target", "00ff00ff" };
+settings::Rgba info_text_color{ "hack-info.color", "ffffffff" };
 
 rgba_t red   = *col_red;
 rgba_t blu   = *col_blu;
@@ -31,6 +32,7 @@ rgba_t red_u = *col_red_u;
 rgba_t blu_u = *col_blu_u;
 rgba_t gui = *col_guicolor;
 rgba_t target = *col_target;
+rgba_t hackinfocolor   = *info_text_color;
 
 static InitRoutine init([]() {
   col_red.installChangeCallback([](settings::VariableBase<rgba_t> &var, rgba_t after) { red = after; });
@@ -43,6 +45,7 @@ static InitRoutine init([]() {
   col_blu_u.installChangeCallback([](settings::VariableBase<rgba_t> &var, rgba_t after) { blu_u = after; });
   col_guicolor.installChangeCallback([](settings::VariableBase<rgba_t> &var, rgba_t after) { gui = after; });
   col_target.installChangeCallback([](settings::VariableBase<rgba_t> &var, rgba_t after) { target = after; });
+  info_text_color.installChangeCallback([](settings::VariableBase<rgba_t> &var, rgba_t after) { hackinfocolor = after; });
 });
 }
 
