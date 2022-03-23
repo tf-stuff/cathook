@@ -9,7 +9,7 @@ fi
 [[ ! -z "$SUDO_USER" ]] && RUNUSER="$SUDO_USER" || RUNUSER="$LOGNAME"
 RUNCMD="sudo -u $RUNUSER"
 
-$RUNCMD bash ./scripts/updater true
+#$RUNCMD bash ./scripts/updater true
 #$RUNCMD bash ./report-crash true
 
 line=$(pgrep -u $RUNUSER hl2_linux)
