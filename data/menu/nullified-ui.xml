@@ -7,8 +7,8 @@
             <!--<Include path="nullifiedcat/antiaim.xml"/>
             <Include path="nullifiedcat/warp.xml"/>-->
             <Include path="nullifiedcat/movement.xml"/>
-            <!--<Include path="nullifiedcat/misc.xml"/>
-			<Include path="nullifiedcat/chat.xml"/>-->
+            <Include path="nullifiedcat/misc.xml"/>
+			<!--<Include path="nullifiedcat/chat.xml"/>-->
             <Include path="nullifiedcat/config.xml"/>
             <Include path="nullifiedcat/hackinfo.xml"/>
         </TabContainer>
