@@ -6,7 +6,7 @@
 #include <settings/Bool.hpp>
 #include "HookedMethods.hpp"
 
-static settings::Boolean medal_flip{ "visual.medal-flip", "false" };
+static settings::Boolean medal_flip{ "visual.medal-flip", "true" };
 
 namespace hooked_methods
 {
