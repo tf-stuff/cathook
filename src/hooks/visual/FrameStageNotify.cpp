@@ -15,7 +15,7 @@ static settings::Float nightmode_gui{ "visual.night-mode.gui", "0" };
 static settings::Float nightmode_world{ "visual.night-mode.world", "0" };
 static settings::Float nightmode_skybox{ "visual.night-mode.skybox", "0" };
 static settings::Rgba nightmode_gui_color{ "visual.night-mode.gui-color", "000000FF" };
-static settings::Rgba nightmode_world_color{ "visual.night-mode.world-color", "000000FF" };
+static settings::Rgba nightmode_world_color{ "visual.night-mode.world-color", "2a2a4bFF" };
 static settings::Rgba nightmode_skybox_color{ "visual.night-mode.skybox-color", "000000FF" };
 static settings::Boolean no_shake{ "visual.no-shake", "false" };
 static settings::Boolean override_textures{ "visual.override-textures", "false" };

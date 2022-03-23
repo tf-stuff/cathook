@@ -103,6 +103,8 @@
                 </Select>
             </LabeledObject>
             <AutoVariable width="fill" target="visual.killfeedcolor.enable" label="Enable killfeed coloring" tooltip="Colors names in killfeed to reflect player states eg: RAGE"/>
+			<AutoVariable width="fill" target="visual.override-textures" label="override textures"/>
+			<AutoVariable width="fill" target="visual.override-textures.custom-texture" label="override texture"/>
         </List>
     </Box>
 </Tab>
