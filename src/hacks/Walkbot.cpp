@@ -827,7 +827,7 @@ index_t SelectNextNode()
                         if ((chargetime >= 0.1f) && begansticky > 3)
                         {
                             current_user_cmd->buttons &= ~IN_ATTACK;
-                            //hacks::shared::antiaim::SetSafeSpace(3);
+                            hacks::shared::antiaim::SetSafeSpace(3);
                             begansticky = 0;
                         }
                         // Else just keep charging
