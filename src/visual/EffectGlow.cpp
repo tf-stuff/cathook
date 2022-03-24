@@ -232,8 +232,8 @@ rgba_t EffectGlow::GlowColor(IClientEntity *entity)
     ent = ENTITY(entity->entindex());
     if (CE_BAD(ent))
         return colors::white;
-    //if (ent == hacks::shared::aimbot::CurrentTarget() && aimbot_color)
-    //    return colors::target;
+    if (ent == hacks::shared::aimbot::CurrentTarget() && aimbot_color)
+        return colors::target;
     if (re::C_BaseCombatWeapon::IsBaseCombatWeapon(entity))
     {
         owner = re::C_TFWeaponBase::GetOwnerViaInterface(entity);

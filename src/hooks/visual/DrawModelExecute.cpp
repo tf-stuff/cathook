@@ -336,8 +336,8 @@ static ChamColors GetChamColors(IClientEntity *entity, bool ignorez)
 
     if (CE_BAD(ent))
         return ChamColors(colors::white);
-    //if (ent == hacks::shared::aimbot::CurrentTarget() && aimbot_color)
-    //    return ChamColors(colors::target);
+    if (ent == hacks::shared::aimbot::CurrentTarget() && aimbot_color)
+        return ChamColors(colors::target);
     if (re::C_BaseCombatWeapon::IsBaseCombatWeapon(entity))
     {
         IClientEntity *owner = re::C_TFWeaponBase::GetOwnerViaInterface(entity);

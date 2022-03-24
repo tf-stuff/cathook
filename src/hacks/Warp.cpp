@@ -365,7 +365,7 @@ void Warp(float accumulated_extra_samples, bool finalTick)
                 hooked_methods::UpdatePred();
 
             if (in_rapidfire)
-                //hacks::shared::aimbot::last_target_ignore_timer = tickcount + 12;
+                hacks::shared::aimbot::last_target_ignore_timer = tickcount + 12;
             original(accumulated_extra_samples, finalTick);
             // Only decrease ticks for the final CL_Move tick
             if (finalTick)

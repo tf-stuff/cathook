@@ -737,15 +737,15 @@ static void followCrumbs()
     }*/
 
     // Look at path
-    //if (look && !hacks::shared::aimbot::isAiming())
-    //{
-    //    Vector next{ crumbs[0].vec.x, crumbs[0].vec.y, g_pLocalPlayer->v_Eye.z };
-    //    next = GetAimAtAngles(g_pLocalPlayer->v_Eye, next);
+    if (look && !hacks::shared::aimbot::isAiming())
+    {
+        Vector next{ crumbs[0].vec.x, crumbs[0].vec.y, g_pLocalPlayer->v_Eye.z };
+        next = GetAimAtAngles(g_pLocalPlayer->v_Eye, next);
 
         // Slow aim to smoothen
-    //    hacks::tf2::misc_aimbot::DoSlowAim(next);
-    //    current_user_cmd->viewangles = next;
-    //}
+        hacks::tf2::misc_aimbot::DoSlowAim(next);
+        current_user_cmd->viewangles = next;
+    }
 
     WalkTo(current_vec);
 }

@@ -1,10 +1,9 @@
-set(files
-        "${CMAKE_CURRENT_LIST_DIR}/AutoJoin.cpp"
+set(files "${CMAKE_CURRENT_LIST_DIR}/AutoJoin.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/AntiCheatBypass.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/CatBot.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/Spam.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/AutoItem.cpp"
-        #"${CMAKE_CURRENT_LIST_DIR}/Aimbot.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/Aimbot.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/AutoViewmodel.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/MiscAimbot.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/Announcer.cpp"
@@ -41,8 +40,7 @@ set(files
         "${CMAKE_CURRENT_LIST_DIR}/SpellForcer.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/UberSpam.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/Walkbot.cpp"
-        "${CMAKE_CURRENT_LIST_DIR}/Warp.cpp"
-        )
+        "${CMAKE_CURRENT_LIST_DIR}/Warp.cpp")
 target_sources(cathook PRIVATE ${files})
 
 add_subdirectory(ac)
