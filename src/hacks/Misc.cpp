@@ -1083,48 +1083,6 @@ static InitRoutine init(
         EC::Register(EC::CreateMoveWarp, CreateMove, "cmw_misc_hacks", EC::average);
 #if ENABLE_VISUALS
         EC::Register(EC::Draw, Draw, "draw_misc_hacks", EC::average);
-#if !ENFORCE_STREAM_SAFETY
-        if (render_zoomed)
-            tryPatchLocalPlayerShouldDraw(true);
-        render_zoomed.installChangeCallback([](settings::VariableBase<bool> &, bool after) { tryPatchLocalPlayerShouldDraw(after); });
-        patch_playerpanel     = std::make_unique<BytePatch>(gSignatures.GetClientSignature, "0F 94 45 ? 85 C0 0F 8E", 0x0, std::vector<unsigned char>{ 0xC6, 0x45, 0xDF, 0x01 });
-        uintptr_t addr_scrbrd = gSignatures.GetClientSignature("8B 10 89 74 24 04 89 04 24 FF 92 ? ? ? ? 83 F8 02 75 09");
-
-        // Address to the function we need to jump to
-        uintptr_t target_addr = e8call_direct(gSignatures.GetClientSignature("E8 ? ? ? ? 83 FE 2D"));
-        uintptr_t rel_addr    = ((uintptr_t) target_addr - ((uintptr_t) addr_scrbrd + 2)) - 5;
-
-        patch_scoreboard1 = std::make_unique<BytePatch>(addr_scrbrd, std::vector<unsigned char>{ 0xEB, 0x31, 0xE8, foffset(rel_addr, 0), foffset(rel_addr, 1), foffset(rel_addr, 2), foffset(rel_addr, 3), 0xE9, 0xC9, 0x06, 0x00, 0x00 });
-        patch_scoreboard2 = std::make_unique<BytePatch>(addr_scrbrd + 0xA0, std::vector<unsigned char>{ 0xE9, 0x5D, 0xFF, 0xFF, 0xFF });
-        patch_scoreboard3 = std::make_unique<BytePatch>(addr_scrbrd + 0x84A, std::vector<unsigned char>{ 0x8f, 0xFE });
-        patch_playerpanel->Patch();
-        patch_scoreboard1->Patch();
-        patch_scoreboard2->Patch();
-        patch_scoreboard3->Patch();
-
-        static BytePatch stealth_kill{ gSignatures.GetClientSignature, "84 C0 75 28 A1", 2, { 0x90, 0x90 } }; // stealth kill patch
-        stealth_kill.Patch();
-        static BytePatch cyoa_patch{ gSignatures.GetClientSignature, "75 ? 80 BB ? ? ? ? 00 74 ? A1 ? ? ? ? 8B 10 C7 44 24", 0, { 0xEB } };
-        cyoa_patch.Patch();
-        EC::Register(
-            EC::Shutdown,
-            []()
-            {
-                stealth_kill.Shutdown();
-                cyoa_patch.Shutdown();
-                tryPatchLocalPlayerShouldDraw(false);
-                force_wait_func(false);
-            },
-            "shutdown_stealthkill");
-        dont_hide_stealth_kills.installChangeCallback(
-            [](settings::VariableBase<bool> &, bool after)
-            {
-                if (after)
-                    stealth_kill.Patch();
-                else
-                    stealth_kill.Shutdown();
-            });
-#endif
 #endif
     });
 } // namespace hacks::shared::misc
