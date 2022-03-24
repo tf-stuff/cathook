@@ -729,8 +729,8 @@ static InitRoutine init(
             []()
             {
                 // Don't run if we don't use it
-                if (!hacks::shared::aimbot::engine_projpred && !debug_pp_draw)
-                    return;
+                //if (!hacks::shared::aimbot::engine_projpred && !debug_pp_draw)
+                //    return;
                 for (int i = 1; i < g_GlobalVars->maxClients; i++)
                 {
                     auto ent     = ENTITY(i);

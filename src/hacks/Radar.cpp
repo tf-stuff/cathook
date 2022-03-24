@@ -125,11 +125,7 @@ void DrawEntity(int x, int y, CachedEntity *ent)
                 tx_teams[idx].draw(x + wtr.first, y + wtr.second, (int) icon_size, (int) icon_size, colors::white);
                 tx_class[0][clazz - 1].draw(x + wtr.first, y + wtr.second, (int) icon_size, (int) icon_size, colors::white);
             }
-            else
-            {
-                tx_class[2 - idx][clazz - 1].draw(x + wtr.first, y + wtr.second, (int) icon_size, (int) icon_size, colors::white);
-                draw::RectangleOutlined(x + wtr.first, y + wtr.second, (int) icon_size, (int) icon_size, *aimbot_highlight ? (ent == hacks::shared::aimbot::CurrentTarget() ? colors::target : (idx ? colors::blu_v : colors::red_v)) : (idx ? colors::blu_v : colors::red_v), 1.0f);
-            }
+
 
             if (ent->m_iMaxHealth() && *healthbar > 0)
             {
@@ -221,7 +217,7 @@ void Draw()
     int radar_size = *size;
     int half_size  = radar_size / 2;
 
-    rgba_t outlineclr = *aimbot_highlight ? (hacks::shared::aimbot::CurrentTarget() != null ? colors::target : colors::gui) : colors::gui;
+    rgba_t outlineclr = colors::gui;
 
     if (*shape == 0)
     {
