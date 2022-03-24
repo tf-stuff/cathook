@@ -255,7 +255,7 @@ DEFINE_HOOKED_METHOD(SendNetMsg, bool, INetChannel *this_, INetMessage &msg, boo
         force_reliable = true;
     // Don't use warp with nospread
     else
-        hacks::tf2::warp::SendNetMessage(msg);
+        //hacks::tf2::warp::SendNetMessage(msg);
 
     hacks::tf2::antianticheat::SendNetMsg(msg);
 

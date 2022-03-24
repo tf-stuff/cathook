@@ -52,7 +52,7 @@ DetourHook cl_nospread_sendmovedetour;
 static InitRoutine misc_init([]() {
     static auto cl_sendmove_addr = gSignatures.GetEngineSignature("55 89 E5 57 56 53 81 EC 2C 10 00 00 C6 85 ? ? ? ? 01");
     // Order matters!
-    cl_warp_sendmovedetour.Init(cl_sendmove_addr, (void *) hacks::tf2::warp::CL_SendMove_hook);
+    //cl_warp_sendmovedetour.Init(cl_sendmove_addr, (void *) hacks::tf2::warp::CL_SendMove_hook);
     cl_nospread_sendmovedetour.Init(cl_sendmove_addr, (void *) hacks::tf2::nospread::CL_SendMove_hook);
 
     static std::optional<BytePatch> patch;

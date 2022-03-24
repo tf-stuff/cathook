@@ -557,14 +557,14 @@ void CreateMoveEarly()
 {
     // Update key state
     key_valid = UpdateRFKey();
-    if (hacks::tf2::warp::in_rapidfire && current_user_cmd)
+    /*if (hacks::tf2::warp::in_rapidfire && current_user_cmd)
     {
         if (current_user_cmd)
         {
             g_GlobalVars->tickcount++;
             current_user_cmd->tick_count++;
         }
-    }
+    }*/
 }
 
 static float original_curtime = 0.0f;
