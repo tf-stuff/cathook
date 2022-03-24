@@ -349,8 +349,8 @@ void CreateMove()
 
                     // Doesnt work with anti-aim as well as I hoped... I guess
                     // this is as far as I can go with such a simple tauntslide
-                    if (!hacks::shared::antiaim::isEnabled())
-                        current_user_cmd->viewangles.y = camera_angle[1];
+                    /*if (!hacks::shared::antiaim::isEnabled())
+                        current_user_cmd->viewangles.y = camera_angle[1];*/
                     g_pLocalPlayer->v_OrigViewangles.y = camera_angle[1];
 
                     // Use silent since we dont want to prevent the player from

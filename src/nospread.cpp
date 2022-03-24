@@ -665,8 +665,8 @@ void CL_SendMove_hook()
 
     if (correct_ping)
         // Ping changed, adjust (Provided we are not fakelagging)
-        if (!(fakelag_amount || (hacks::shared::antiaim::isEnabled() && hacks::shared::antiaim::force_fakelag)) && (int) (ping * 1000.0) != (int) (ping_at_send * 1000.0))
-            predicted_time += ping - ping_at_send;
+        /*if (!(fakelag_amount || (hacks::shared::antiaim::isEnabled() && hacks::shared::antiaim::force_fakelag)) && (int) (ping * 1000.0) != (int) (ping_at_send * 1000.0))
+            predicted_time += ping - ping_at_send;*/
 
     // Check if we need to sync
     RecheckIfresync_needed(asumed_real_time);

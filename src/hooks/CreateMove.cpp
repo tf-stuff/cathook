@@ -276,7 +276,7 @@ DEFINE_HOOKED_METHOD(CreateMove, bool, void *this_, float input_sample_time, CUs
                         current_user_cmd->buttons &= ~IN_ATTACK;
             g_pLocalPlayer->isFakeAngleCM = false;
             static int fakelag_queue      = 0;
-            if (CE_GOOD(LOCAL_E))
+            /*if (CE_GOOD(LOCAL_E))
                 if (!hacks::tf2::nospread::is_syncing && (fakelag_amount || (hacks::shared::antiaim::force_fakelag && hacks::shared::antiaim::isEnabled())))
                 {
                     // Do not fakelag when trying to attack
@@ -316,7 +316,7 @@ DEFINE_HOOKED_METHOD(CreateMove, bool, void *this_, float input_sample_time, CUs
             {
                 PROF_SECTION(CM_antiaim);
                 hacks::shared::antiaim::ProcessUserCmd(cmd);
-            }
+            }*/
             if (debug_projectiles)
                 projectile_logging::Update();
         }

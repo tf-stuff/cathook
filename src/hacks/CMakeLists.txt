@@ -8,7 +8,7 @@ set(files
         "${CMAKE_CURRENT_LIST_DIR}/AutoViewmodel.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/MiscAimbot.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/Announcer.cpp"
-        "${CMAKE_CURRENT_LIST_DIR}/AntiAim.cpp"
+        #"${CMAKE_CURRENT_LIST_DIR}/AntiAim.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/AntiAntiAim.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/AntiBackstab.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/AntiCheat.cpp"
