@@ -1,7 +1,7 @@
 set(files
         "${CMAKE_CURRENT_LIST_DIR}/AutoJoin.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/AntiCheatBypass.cpp"
-        #"${CMAKE_CURRENT_LIST_DIR}/CatBot.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/CatBot.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/Spam.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/AutoItem.cpp"
         #"${CMAKE_CURRENT_LIST_DIR}/Aimbot.cpp"

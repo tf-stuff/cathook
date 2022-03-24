@@ -136,14 +136,14 @@ DEFINE_HOOKED_METHOD(DispatchUserMessage, bool, void *this_, int type, bf_read &
         buf.Seek(0);
         break;
     }
-    /*case 12:
+    case 12:
         if (hacks::shared::catbot::anti_motd && hacks::shared::catbot::catbotmode)
         {
             data = std::string(buf_data);
             if (data.find("class_") != data.npos)
                 return false;
         }
-        break;*/
+        break;
     case 5:
     {
         if (*anti_votekick && buf.GetNumBytesLeft() > 35)
