@@ -229,11 +229,11 @@ DEFINE_HOOKED_METHOD(CreateMove, bool, void *this_, float input_sample_time, CUs
 
     //	PROF_BEGIN();
     // Do not update if in warp, since the entities will stay identical either way
-    /*if (!hacks::tf2::warp::in_warp)
+    if (!hacks::tf2::warp::in_warp)
     {
         PROF_SECTION(EntityCache);
         entity_cache::Update();
-    }*/
+    }
     //	PROF_END("Entity Cache updating");
     {
         PROF_SECTION(CM_PlayerResource);
@@ -331,10 +331,10 @@ DEFINE_HOOKED_METHOD(CreateMove, bool, void *this_, float input_sample_time, CUs
             g_pLocalPlayer->UpdateEye();
         }
 
-        /*if (hacks::tf2::warp::in_warp)
+        if (hacks::tf2::warp::in_warp)
             EC::run(EC::CreateMoveWarp);
         else
-            EC::run(EC::CreateMove);*/
+            EC::run(EC::CreateMove);
     }
     if (time_replaced)
         g_GlobalVars->curtime = curtime_old;
