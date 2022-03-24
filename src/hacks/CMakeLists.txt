@@ -45,17 +45,8 @@ target_sources(cathook PRIVATE ${files})
 
 add_subdirectory(ac)
 if(EnableVisuals)
-    set(files "${CMAKE_CURRENT_LIST_DIR}/BulletTracers.cpp"
-            "${CMAKE_CURRENT_LIST_DIR}/DominateMark.cpp"
-            "${CMAKE_CURRENT_LIST_DIR}/ESP.cpp"
-            "${CMAKE_CURRENT_LIST_DIR}/ExplosionCircles.cpp"
-            "${CMAKE_CURRENT_LIST_DIR}/HeadESP.cpp"
-            "${CMAKE_CURRENT_LIST_DIR}/KillfeedColor.cpp"
-            "${CMAKE_CURRENT_LIST_DIR}/Tracers.cpp"
-            "${CMAKE_CURRENT_LIST_DIR}/Radar.cpp"
+    set(files "${CMAKE_CURRENT_LIST_DIR}/ExplosionCircles.cpp"
             "${CMAKE_CURRENT_LIST_DIR}/SkinChanger.cpp"
-            "${CMAKE_CURRENT_LIST_DIR}/SpyAlert.cpp"
-            "${CMAKE_CURRENT_LIST_DIR}/Thirdperson.cpp"
             "${CMAKE_CURRENT_LIST_DIR}/MCHealthbar.cpp"
             "${CMAKE_CURRENT_LIST_DIR}/Ragdolls.cpp")
     target_sources(cathook PRIVATE ${files})
