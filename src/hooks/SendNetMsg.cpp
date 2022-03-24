@@ -329,11 +329,11 @@ DEFINE_HOOKED_METHOD(SendNetMsg, bool, INetChannel *this_, INetMessage &msg, boo
             }
         }
     }*/
-    if (!strcmp(msg.GetName(), "clc_CmdKeyValues"))
+    /*if (!strcmp(msg.GetName(), "clc_CmdKeyValues"))
     {
         hacks::shared::antiaim::SendNetMessage(msg);
         hacks::shared::catbot::SendNetMsg(msg);
-    }
+    }*/
     if (log_sent && msg.GetType() != 3 && msg.GetType() != 9)
     {
         if (!strcmp(msg.GetName(), "clc_CmdKeyValues"))
