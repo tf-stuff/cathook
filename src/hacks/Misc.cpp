@@ -786,9 +786,188 @@ static CatCommand debug_print_weaponid("debug_weaponid", "Print the weapon IDs o
                                            }
                                        });
 
+#if ENABLE_VISUALS && !ENFORCE_STREAM_SAFETY
+// This makes us able to see enemy class and status in scoreboard and player panel
+static std::unique_ptr<BytePatch> patch_playerpanel;
+static std::unique_ptr<BytePatch> patch_scoreboard1;
+static std::unique_ptr<BytePatch> patch_scoreboard2;
+static std::unique_ptr<BytePatch> patch_scoreboard3;
+
+// Credits to UNKN0WN
+namespace ScoreboardColoring
+{
+static std::unique_ptr<BytePatch> patch_scoreboardcolor1;
+static std::unique_ptr<BytePatch> patch_scoreboardcolor2;
+uintptr_t addr1 = 0;
+uintptr_t addr2 = 0;
+
+// Colors taken from client.so
+Color &GetPlayerColor(int idx, int team, bool dead = false)
+{
+    static Color returnColor(0, 0, 0, 0);
+
+    int col_red[] = { scc ? int(colors::red.r * 255) : 255, scc ? int(colors::red.g * 255) : 64, scc ? int(colors::red.b * 255) : 64 };
+    int col_blu[] = { scc ? int(colors::blu.r * 255) : 153, scc ? int(colors::blu.g * 255) : 204, scc ? int(colors::blu.b * 255) : 255 };
+
+    switch (team)
+    {
+    case TEAM_RED:
+        returnColor.SetColor(col_red[0], col_red[1], col_red[2], 255);
+        break;
+    case TEAM_BLU:
+        returnColor.SetColor(col_blu[0], col_blu[1], col_blu[2], 255);
+        break;
+    default:
+        returnColor.SetColor(245, 229, 196, 255);
+    }
+
+    player_info_s pinfo;
+    if (GetPlayerInfo(idx, &pinfo))
+    {
+        rgba_t cust = playerlist::Color(pinfo.friendsID);
+        if (cust != colors::empty)
+            returnColor.SetColor(cust.r * 255, cust.g * 255, cust.b * 255, 255);
+    }
+
+    if (dead)
+        for (int i = 0; i < 3; i++)
+            returnColor[i] /= 1.5f;
+
+    return returnColor;
+}
+
+// This gets playerIndex with assembly magic, then sets a Color for the scoreboard entries
+Color &GetTeamColor(void *, int team)
+{
+    int playerIndex;
+    __asm__("mov %%esi, %0" : "=r"(playerIndex));
+    return GetPlayerColor(playerIndex, team);
+}
+
+// This is some assembly magic in order to get playerIndex and team from already existing variables and then set scoreboard entries
+Color &GetDeadPlayerColor()
+{
+    int playerIndex;
+    int team;
+    __asm__("mov %%esi, %0" : "=r"(playerIndex));
+    team = g_pPlayerResource->GetTeam(playerIndex);
+    return GetPlayerColor(playerIndex, team, true);
+}
+
+static InitRoutine init(
+    []()
+    {
+        // 012BA7E4
+        addr1 = gSignatures.GetClientSignature("89 04 24 FF 92 ? ? ? ? 8B 00") + 3;
+        // 012BA105
+        addr2 = gSignatures.GetClientSignature("75 1B 83 FB 02") + 2;
+        if (addr1 == 3 || addr2 == 2)
+            return;
+        logging::Info("Patching scoreboard colors");
+
+        // Used to Detour, we need to detour at two parts in order to do this properly
+        auto relAddr1 = ((uintptr_t) GetTeamColor - (uintptr_t) addr1) - 5;
+        auto relAddr2 = ((uintptr_t) GetDeadPlayerColor - (uintptr_t) addr2) - 5;
+
+        // Construct BytePatch1
+        std::vector<unsigned char> patch1 = { 0xE8 };
+        for (size_t i = 0; i < sizeof(uintptr_t); i++)
+            patch1.push_back(((unsigned char *) &relAddr1)[i]);
+        for (int i = patch1.size(); i < 6; i++)
+            patch1.push_back(0x90);
+
+        // Construct BytePatch2
+        std::vector<unsigned char> patch2 = { 0xE8 };
+        for (size_t i = 0; i < sizeof(uintptr_t); i++)
+            patch2.push_back(((unsigned char *) &relAddr2)[i]);
+        patch2.push_back(0x8B);
+        patch2.push_back(0x00);
+        for (int i = patch2.size(); i < 27; i++)
+            patch2.push_back(0x90);
+
+        patch_scoreboardcolor1 = std::make_unique<BytePatch>(addr1, patch1);
+        patch_scoreboardcolor2 = std::make_unique<BytePatch>(addr2, patch2);
+
+        // Patch!
+        patch_scoreboardcolor1->Patch();
+        patch_scoreboardcolor2->Patch();
+
+        EC::Register(
+            EC::LevelInit,
+            []()
+            {
+                // Remove truce status
+                setTruce(false);
+            },
+            "truce_reset");
+    });
+} // namespace ScoreboardColoring
+
+typedef void (*UpdateLocalPlayerVisionFlags_t)();
+UpdateLocalPlayerVisionFlags_t UpdateLocalPlayerVisionFlags_fn;
+
+int *g_nLocalPlayerVisionFlags;
+int *g_nLocalPlayerVisionFlagsWeaponsCheck;
+// If you wish then change this to some other flag you want to apply/remove
+constexpr int PYROVISION = 1;
+
+static settings::Int force_pyrovision("visual.force-pyrovision", "0");
+
+void UpdateLocalPlayerVisionFlags()
+{
+    UpdateLocalPlayerVisionFlags_fn();
+    if (!force_pyrovision)
+        return;
+    if (*force_pyrovision == 2)
+    {
+        *g_nLocalPlayerVisionFlags &= ~PYROVISION;
+        *g_nLocalPlayerVisionFlagsWeaponsCheck &= ~PYROVISION;
+    }
+    else
+    {
+        *g_nLocalPlayerVisionFlags |= PYROVISION;
+        *g_nLocalPlayerVisionFlagsWeaponsCheck |= PYROVISION;
+    }
+}
+#define access_ptr(p, i) ((unsigned char *) &p)[i]
+
+static InitRoutine init_pyrovision(
+    []()
+    {
+        uintptr_t addr                        = gSignatures.GetClientSignature("8B 35 ? ? ? ? 75 27");
+        g_nLocalPlayerVisionFlags             = *reinterpret_cast<int **>(addr + 2);
+        g_nLocalPlayerVisionFlagsWeaponsCheck = *reinterpret_cast<int **>(addr + 8 + 2);
+        addr                                  = gSignatures.GetClientSignature("C7 04 24 ? ? ? ? E8 ? ? ? ? E8 ? ? ? ? E8 ? ? ? ? E8");
+        if (!addr)
+            return;
+        addr += 17;
+        UpdateLocalPlayerVisionFlags_fn = UpdateLocalPlayerVisionFlags_t(e8call_direct(addr));
+
+        auto relAddr = ((uintptr_t) UpdateLocalPlayerVisionFlags - (uintptr_t) addr) - 5;
+
+        static BytePatch patch{ addr, { 0xE8, access_ptr(relAddr, 0), access_ptr(relAddr, 1), access_ptr(relAddr, 2), access_ptr(relAddr, 3) } };
+        patch.Patch();
+        EC::Register(
+            EC::Shutdown, []() { patch.Shutdown(); }, "shutdown_pyrovis");
+    });
+#endif
+
 static CatCommand print_eye_diff("debug_print_eye_diff", "debug", []() { logging::Info("%f", g_pLocalPlayer->v_Eye.z - LOCAL_E->m_vecOrigin().z); });
 void Shutdown()
 {
+#if ENABLE_VISUALS && !ENFORCE_STREAM_SAFETY
+    // unpatching local player
+    render_zoomed = false;
+    patch_playerpanel->Shutdown();
+    patch_scoreboard1->Shutdown();
+    patch_scoreboard2->Shutdown();
+    patch_scoreboard3->Shutdown();
+    if (ScoreboardColoring::addr1 == 3 || ScoreboardColoring::addr2 == 2)
+        return;
+
+    ScoreboardColoring::patch_scoreboardcolor1->Shutdown();
+    ScoreboardColoring::patch_scoreboardcolor2->Shutdown();
+#endif
 }
 
 static ProxyFnHook cyoa_anim_hook{};
